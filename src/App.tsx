@@ -214,7 +214,23 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier recommending wines for: ' + selectedUserNames + '.\n\n' + wineHistory + '\n\nPreferences: ' + preferences + '\n\nAnalyze the wine list in the image(s) and recommend the top 5 wines. You must ONLY recommend wines that are explicitly visible on this wine list. Do not suggest any wine not shown in the image. Recommend the top 5 wines from this list only. Return ONLY a valid JSON array:\n[{"wine_name":"name","producer":"producer","vintage":"year","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"explanation","tasting_notes":"flavor profile","potential_drawbacks":"risks or null"}]' }] }],
+          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier with deep knowledge of wine regions, grapes, producers, and flavor profiles.\n\n' +
+'You are recommending wines ONLY for: ' + selectedUserNames + '\n\n' +
+'CRITICAL RULE: You may ONLY recommend wines that are explicitly visible in the scanned wine list image(s). Do not invent, suggest, or reference any wine not shown on this specific list. If you cannot read a wine clearly, skip it.\n\n' +
+'Here is the taste history for the people you are recommending for:\n' + wineHistory + '\n\n' +
+'When matching wines, pay close attention to:\n' +
+'- Ratings (Amazing = strong match signal, Bad = avoid similar wines)\n' +
+'- Value ratings (Great Value lovers want good QPR, Overrated = price sensitive)\n' +
+'- Grape varieties and regions they have enjoyed\n' +
+'- Tasting notes they have responded to\n\n' +
+'Their preferences for tonight:\n' + preferences + '\n\n' +
+'Instructions:\n' +
+'1. First scan ALL wines visible in the image(s) and extract the full list\n' +
+'2. Score each wine against the taste history and preferences above\n' +
+'3. Return ONLY the top 5 matches from the actual wine list\n' +
+'4. For each recommendation explain exactly WHY it matches their history\n\n' +
+'Return ONLY a valid JSON array, no other text:\n' +
+'[{"wine_name":"exact name from list","producer":"producer","vintage":"year or null","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"specific explanation referencing their past wines and ratings","tasting_notes":"flavor profile body finish","potential_drawbacks":"honest risks or null"}]' }] }],
           max_tokens: 2000
         })
       })
