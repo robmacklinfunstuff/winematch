@@ -3,7 +3,7 @@ import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
 import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser } from './supabase'
 
-const MASTER_API_KEY = 'xai-BZ2bRZCfIw36HDajOTwIkF55xjCrGye7eCfNwyRgNw61F3nKZaEeetKRRiUIkyTKRP9RaTkGt97gsuFO'
+const MASTER_API_KEY = import.meta.env.VITE_GROK_API_KEY || ''
 
 interface AppUser {
   id: string
