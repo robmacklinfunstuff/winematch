@@ -214,7 +214,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier recommending wines for: ' + selectedUserNames + '.\n\n' + wineHistory + '\n\nPreferences: ' + preferences + '\n\nAnalyze the wine list in the image(s) and recommend the top 5 wines. Return ONLY a valid JSON array:\n[{"wine_name":"name","producer":"producer","vintage":"year","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"explanation","tasting_notes":"flavor profile","potential_drawbacks":"risks or null"}]' }] }],
+          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier recommending wines for: ' + selectedUserNames + '.\n\n' + wineHistory + '\n\nPreferences: ' + preferences + '\n\nAnalyze the wine list in the image(s) and recommend the top 5 wines. You must ONLY recommend wines that are explicitly visible on this wine list. Do not suggest any wine not shown in the image. Recommend the top 5 wines from this list only. Return ONLY a valid JSON array:\n[{"wine_name":"name","producer":"producer","vintage":"year","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"explanation","tasting_notes":"flavor profile","potential_drawbacks":"risks or null"}]' }] }],
           max_tokens: 2000
         })
       })
