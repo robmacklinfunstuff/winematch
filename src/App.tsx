@@ -245,7 +245,13 @@ export default function App() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               <div style={{ borderRadius: '16px', overflow: 'hidden', background: 'black' }}>
-                <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" style={{ width: '100%' }} />
+                <Webcam
+  ref={webcamRef}
+  audio={false}
+  screenshotFormat="image/jpeg"
+  videoConstraints={{ facingMode: 'environment' }}
+  style={{ width: '100%' }}
+/>
               </div>
               <div style={{ display: 'flex', gap: '12px' }}>
                 <button onClick={capturePhoto} style={{ flex: 1, background: 'white', color: 'black', border: 'none', borderRadius: '12px', padding: '16px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>
