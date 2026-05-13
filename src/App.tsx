@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
 import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
+import { saveWineWithRatings, getWinesForUsers } from './supabase'
 
 interface SavedWine {
   id: string
@@ -41,7 +42,26 @@ interface Recommendation {
   potential_drawbacks?: string
 }
 
-type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'settings'
+interface NewWine {
+  name: string
+  producer: string
+  vintage: string
+  grapes: string
+  region: string
+  country: string
+  color: string
+  tasting_notes: string
+}
+
+interface UserRating {
+  user_name: string
+  rating: string
+  value_rating: string
+  price: string
+  notes: string
+}
+
+type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'addWineForm' | 'rateWine' | 'settings'
 
 function loadUsers(): AppUser[] {
   const stored = localStorage.getItem('winematch_users')
@@ -53,6 +73,9 @@ function saveUsers(users: AppUser[]): void {
 }
 
 const COUNTRIES = ['USA', 'France', 'Italy', 'Spain', 'Australia/New Zealand', 'South America', 'Germany/Austria', 'Other']
+const COLORS = ['Red', 'White', 'Rosé', 'Sparkling', 'Dessert']
+const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
+const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('startup')
@@ -63,6 +86,7 @@ export default function App() {
   const [isCameraActive, setIsCameraActive] = useState(false)
   const [apiKey, setApiKey] = useState(localStorage.getItem('grokApiKey') || '')
   const webcamRef = useRef<Webcam>(null)
+  const labelCamRef = useRef<Webcam>(null)
 
   const [quizStep, setQuizStep] = useState(0)
   const [wineColor, setWineColor] = useState('')
@@ -78,144 +102,133 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [priceFilter, setPriceFilter] = useState<{ min: number; max: number } | null>(null)
 
-  const persistUsers = (updated: AppUser[]) => {
-    setUsers(updated)
-    saveUsers(updated)
-  }
+  const [newWine, setNewWine] = useState<NewWine>({ name: '', producer: '', vintage: '', grapes: '', region: '', country: '', color: '', tasting_notes: '' })
+  const [userRatings, setUserRatings] = useState<UserRating[]>([])
+  const [ratingUserIndex, setRatingUserIndex] = useState(0)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isParsingLabel, setIsParsingLabel] = useState(false)
+  const [labelCameraActive, setLabelCameraActive] = useState(false)
+
+  const persistUsers = (updated: AppUser[]) => { setUsers(updated); saveUsers(updated) }
 
   const addUser = () => {
     const trimmed = newUserName.trim()
     if (!trimmed || users.length >= 6) return
-    const updated = [...users, { id: uuidv4(), name: trimmed, wines: [] }]
-    persistUsers(updated)
+    persistUsers([...users, { id: uuidv4(), name: trimmed, wines: [] }])
     setNewUserName('')
   }
 
   const toggleSelectUser = (id: string) => {
-    setSelectedUsers(prev =>
-      prev.includes(id) ? prev.filter(u => u !== id) : [...prev, id]
-    )
+    setSelectedUsers(prev => prev.includes(id) ? prev.filter(u => u !== id) : [...prev, id])
   }
 
   const capturePhoto = () => {
     const imageSrc = webcamRef.current?.getScreenshot()
-    if (imageSrc) {
-      setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: imageSrc }])
-      setIsCameraActive(false)
+    if (imageSrc) { setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: imageSrc }]); setIsCameraActive(false) }
+  }
+
+  const startAddWine = () => {
+    setNewWine({ name: '', producer: '', vintage: '', grapes: '', region: '', country: '', color: '', tasting_notes: '' })
+    const names = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name)
+    setUserRatings(names.map(name => ({ user_name: name, rating: '', value_rating: '', price: '', notes: '' })))
+    setRatingUserIndex(0)
+    setLabelCameraActive(false)
+    setScreen('addWine')
+  }
+
+  const scanWineLabel = async () => {
+    const imageSrc = labelCamRef.current?.getScreenshot()
+    if (!imageSrc || !apiKey) return
+    setIsParsingLabel(true)
+    setLabelCameraActive(false)
+    try {
+      const response = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+        body: JSON.stringify({
+          model: 'grok-4.3',
+          messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: imageSrc, detail: 'high' } }, { type: 'text', text: 'You are a wine expert. Analyze this wine label and extract details. Return ONLY valid JSON:\n{"name":"wine name","producer":"winery","vintage":"year or null","grapes":"grape varieties","region":"region","country":"country","color":"Red or White or Rose or Sparkling or Dessert","tasting_notes":"notes or null"}' }] }],
+          max_tokens: 500
+        })
+      })
+      const data = await response.json()
+      const content = data.choices?.[0]?.message?.content || '{}'
+      const parsed = JSON.parse(content.replace(/```json|```/g, '').trim())
+      setNewWine(prev => ({ ...prev, ...Object.fromEntries(Object.entries(parsed).filter(([_, v]) => v)) }))
+      setScreen('addWineForm')
+    } catch (err) {
+      console.error(err)
+      alert('Could not read label. Please fill in manually.')
+      setScreen('addWineForm')
+    } finally {
+      setIsParsingLabel(false)
+    }
+  }
+
+  const updateRating = (field: keyof UserRating, value: string) => {
+    setUserRatings(prev => prev.map((r, i) => i === ratingUserIndex ? { ...r, [field]: value } : r))
+  }
+
+  const goToNextRating = async () => {
+    if (ratingUserIndex < userRatings.length - 1) {
+      setRatingUserIndex(i => i + 1)
+    } else {
+      await handleSaveWine()
+    }
+  }
+
+  const handleSaveWine = async () => {
+    if (!newWine.name.trim()) { alert('Please enter at least the wine name'); return }
+    setIsSaving(true)
+    try {
+      const ratingsToSave = userRatings.map(r => ({
+        user_name: r.user_name,
+        rating: r.rating || undefined,
+        value_rating: r.value_rating || undefined,
+        price: r.price ? parseFloat(r.price) : undefined,
+        notes: r.notes || undefined,
+      }))
+      const result = await saveWineWithRatings(newWine, ratingsToSave)
+      if (result.success) { alert('Wine saved! 🍷'); setScreen('home') }
+      else { alert('Error saving wine. Please try again.') }
+    } catch (err) {
+      console.error(err)
+      alert('Error saving wine. Please try again.')
+    } finally {
+      setIsSaving(false)
     }
   }
 
   const callGrok = async () => {
-    if (!apiKey) {
-      alert('Please add your Grok API key in Settings first!')
-      return
-    }
-    if (scannedImages.length === 0) {
-      alert('Please scan at least one page of the wine list first!')
-      return
-    }
-
-    setIsLoading(true)
-    setRecommendations([])
-    setScreen('results')
-
-    const selectedUserNames = users
-      .filter(u => selectedUsers.includes(u.id))
-      .map(u => u.name)
-      .join(', ')
-
-    const allWines = users
-      .filter(u => selectedUsers.includes(u.id))
-      .flatMap(u => u.wines)
-
-    const preferences = `
-      Wine color: ${wineColor || 'no preference'}
-      Price range: ${priceMin && priceMax ? '$' + priceMin + ' - $' + priceMax : 'no preference'}
-      Body: ${wineBody || 'no preference'}
-      Best value priority: ${bestValue || 'no preference'}
-      Country preference: ${wineCountry || 'no preference'}
-      Oak preference: ${wineOak || 'no preference'}
-      Tannin preference: ${wineTannin || 'no preference'}
-    `
-
-    const wineHistory =
-      allWines.length > 0
-        ? 'Past wines they loved: ' + JSON.stringify(allWines)
-        : 'No past wine history yet — rely on their stated preferences.'
-
-    const messages: any[] = [
-      {
-        role: 'user',
-        content: [
-          ...scannedImages.map(img => ({
-  type: 'image_url',
-  image_url: { 
-    url: img.dataUrl,
-    detail: 'high'
-  },
-})),
-          {
-            type: 'text',
-            text:
-              'You are an expert sommelier. You are recommending wines for: ' +
-              selectedUserNames +
-              '.\n\n' +
-              wineHistory +
-              '\n\nTheir preferences for tonight:\n' +
-              preferences +
-              '\n\nPlease analyze the wine list in the image(s) above and recommend the top 5 wines that best match their preferences and taste history.\n\nReturn ONLY a valid JSON array with this exact structure, no other text:\n[\n  {\n    "wine_name": "Full wine name",\n    "producer": "Producer name",\n    "vintage": "Year or null",\n    "menu_price": 65,\n    "retail_price": 45,\n    "similarity_score": 9.2,\n    "why_it_matches": "Detailed explanation",\n    "tasting_notes": "Flavor profile, body, finish",\n    "potential_drawbacks": "Any risks or null"\n  }\n]',
-          },
-        ],
-      },
-    ]
-
+    if (!apiKey) { alert('Please add your Grok API key in Settings first!'); return }
+    if (scannedImages.length === 0) { alert('Please scan at least one page of the wine list first!'); return }
+    setIsLoading(true); setRecommendations([]); setScreen('results')
+    const selectedUserNamesList = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name)
+    const selectedUserNames = selectedUserNamesList.join(', ')
+    const allWines = await getWinesForUsers(selectedUserNamesList)
+    const preferences = `Wine color: ${wineColor || 'no preference'}, Price range: ${priceMin && priceMax ? '$' + priceMin + '-$' + priceMax : 'no preference'}, Body: ${wineBody || 'no preference'}, Best value: ${bestValue || 'no preference'}, Country: ${wineCountry || 'no preference'}, Oak: ${wineOak || 'no preference'}, Tannins: ${wineTannin || 'no preference'}`
+    const wineHistory = allWines.length > 0 ? 'Past wines: ' + JSON.stringify(allWines) : 'No past wine history — rely on stated preferences.'
     try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + apiKey,
-        },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages,
-          max_tokens: 2000,
-        }),
+          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier recommending wines for: ' + selectedUserNames + '.\n\n' + wineHistory + '\n\nPreferences: ' + preferences + '\n\nAnalyze the wine list in the image(s) and recommend the top 5 wines. Return ONLY a valid JSON array:\n[{"wine_name":"name","producer":"producer","vintage":"year","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"explanation","tasting_notes":"flavor profile","potential_drawbacks":"risks or null"}]' }] }],
+          max_tokens: 2000
+        })
       })
-
       const data = await response.json()
       console.log('Grok response:', data)
-
-      if (data.error) {
-        alert('Grok API error: ' + data.error.message)
-        setScreen('quiz')
-        return
-      }
-
+      if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
       const content = data.choices?.[0]?.message?.content || '[]'
-      const clean = content.replace(/```json|```/g, '').trim()
-      const recs = JSON.parse(clean)
-      setRecommendations(recs)
+      setRecommendations(JSON.parse(content.replace(/```json|```/g, '').trim()))
     } catch (err) {
-      console.error(err)
-      alert('Something went wrong. Check your API key and try again.')
-      setScreen('quiz')
-    } finally {
-      setIsLoading(false)
-    }
+      console.error(err); alert('Something went wrong. Check your API key and try again.'); setScreen('quiz')
+    } finally { setIsLoading(false) }
   }
 
-  const resetQuiz = () => {
-    setQuizStep(0)
-    setWineColor('')
-    setPriceMin('')
-    setPriceMax('')
-    setWineBody('')
-    setBestValue('')
-    setWineCountry('')
-    setWineOak('')
-    setWineTannin('')
-  }
+  const resetQuiz = () => { setQuizStep(0); setWineColor(''); setPriceMin(''); setPriceMax(''); setWineBody(''); setBestValue(''); setWineCountry(''); setWineOak(''); setWineTannin('') }
 
   const s: Record<string, any> = {
     page: { minHeight: '100vh', background: '#1F1209', color: 'white', display: 'flex', flexDirection: 'column' },
@@ -225,62 +238,48 @@ export default function App() {
     secondaryBtn: { background: '#2A1F17', border: '1px solid #78350F', borderRadius: '16px', padding: '18px', color: 'white', fontSize: '1rem', cursor: 'pointer', flex: 1 },
     card: { background: '#2A1F17', borderRadius: '20px', padding: '20px', border: '1px solid #78350F' },
     input: { width: '100%', background: '#2A1F17', border: '1px solid #78350F', borderRadius: '12px', padding: '12px 16px', color: 'white', fontSize: '1rem', boxSizing: 'border-box' as const },
+    label: { display: 'block', color: '#FCD34D', fontSize: '0.85rem', marginBottom: '4px' },
   }
 
   const optionBtn = (label: string, value: string, current: string, setter: (v: string) => void) => (
-    <button
-      key={label}
-      onClick={() => setter(current === value ? '' : value)}
-      style={{
-        padding: '18px', borderRadius: '16px', fontSize: '1rem', fontWeight: 'bold',
-        border: '2px solid', cursor: 'pointer', width: '100%',
-        background: current === value ? '#B45309' : '#2A1F17',
-        borderColor: current === value ? '#FCD34D' : '#78350F',
-        color: 'white',
-      }}
-    >
+    <button key={label} onClick={() => setter(current === value ? '' : value)}
+      style={{ padding: '18px', borderRadius: '16px', fontSize: '1rem', fontWeight: 'bold', border: '2px solid', cursor: 'pointer', width: '100%', background: current === value ? '#B45309' : '#2A1F17', borderColor: current === value ? '#FCD34D' : '#78350F', color: 'white' }}>
       {label}
     </button>
   )
 
-  // ── STARTUP ──────────────────────────────────────────────
-  if (screen === 'startup') {
-    return (
-      <div style={s.page}>
-        <div style={{ background: '#3C2A1F', padding: '20px', textAlign: 'center' }}>
-          <h1 style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0 }}>🍷 WineMatch</h1>
-          <p style={{ color: '#FCD34D', margin: '4px 0 0' }}>Your personal AI sommelier</p>
-        </div>
-        <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column' }}>
-          <h2 style={{ textAlign: 'center', fontSize: '1.4rem', marginBottom: '8px' }}>Who are we recommending for today?</h2>
-          <p style={{ textAlign: 'center', color: '#FCD34D', fontSize: '0.9rem', marginBottom: '24px' }}>Tap names to select</p>
-          {users.length === 0 && (
-            <p style={{ textAlign: 'center', color: '#92400E', marginBottom: '16px' }}>No users yet — add yourself below!</p>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
-            {users.map(u => (
-              <button key={u.id} onClick={() => toggleSelectUser(u.id)}
-                style={{ padding: '20px', borderRadius: '16px', fontSize: '1.1rem', fontWeight: 'bold', border: '2px solid', cursor: 'pointer', background: selectedUsers.includes(u.id) ? '#B45309' : '#2A1F17', borderColor: selectedUsers.includes(u.id) ? '#FCD34D' : '#78350F', color: 'white' }}>
-                👤 {u.name}
-              </button>
-            ))}
-          </div>
-          {users.length < 6 && (
-            <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-              <input value={newUserName} onChange={e => setNewUserName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addUser()} placeholder="Add a name..." style={s.input} />
-              <button onClick={addUser} style={{ background: '#B45309', border: 'none', borderRadius: '12px', padding: '12px 20px', color: 'white', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>+ Add</button>
-            </div>
-          )}
-          <button onClick={() => { if (users.length > 0 && selectedUsers.length === 0) { alert('Please tap at least one name'); return; } setScreen('home') }}
-            style={{ ...s.primaryBtn, marginTop: 'auto', padding: '20px', fontSize: '1.2rem' }}>
-            Let's Go →
-          </button>
-        </div>
+  if (screen === 'startup') return (
+    <div style={s.page}>
+      <div style={{ background: '#3C2A1F', padding: '20px', textAlign: 'center' }}>
+        <h1 style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0 }}>🍷 WineMatch</h1>
+        <p style={{ color: '#FCD34D', margin: '4px 0 0' }}>Your personal AI sommelier</p>
       </div>
-    )
-  }
+      <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column' }}>
+        <h2 style={{ textAlign: 'center', fontSize: '1.4rem', marginBottom: '8px' }}>Who are we recommending for today?</h2>
+        <p style={{ textAlign: 'center', color: '#FCD34D', fontSize: '0.9rem', marginBottom: '24px' }}>Tap names to select</p>
+        {users.length === 0 && <p style={{ textAlign: 'center', color: '#92400E', marginBottom: '16px' }}>No users yet — add yourself below!</p>}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
+          {users.map(u => (
+            <button key={u.id} onClick={() => toggleSelectUser(u.id)}
+              style={{ padding: '20px', borderRadius: '16px', fontSize: '1.1rem', fontWeight: 'bold', border: '2px solid', cursor: 'pointer', background: selectedUsers.includes(u.id) ? '#B45309' : '#2A1F17', borderColor: selectedUsers.includes(u.id) ? '#FCD34D' : '#78350F', color: 'white' }}>
+              👤 {u.name}
+            </button>
+          ))}
+        </div>
+        {users.length < 6 && (
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
+            <input value={newUserName} onChange={e => setNewUserName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addUser()} placeholder="Add a name..." style={s.input} />
+            <button onClick={addUser} style={{ background: '#B45309', border: 'none', borderRadius: '12px', padding: '12px 20px', color: 'white', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>+ Add</button>
+          </div>
+        )}
+        <button onClick={() => { if (users.length > 0 && selectedUsers.length === 0) { alert('Please tap at least one name'); return; } setScreen('home') }}
+          style={{ ...s.primaryBtn, marginTop: 'auto', padding: '20px', fontSize: '1.2rem' }}>
+          Let's Go →
+        </button>
+      </div>
+    </div>
+  )
 
-  // ── HOME ─────────────────────────────────────────────────
   if (screen === 'home') {
     const names = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(', ')
     return (
@@ -297,7 +296,7 @@ export default function App() {
             Select a Wine
             <span style={{ fontSize: '0.9rem', fontWeight: 'normal', color: '#FDE68A' }}>Scan a restaurant wine list</span>
           </button>
-          <button onClick={() => setScreen('addWine')}
+          <button onClick={startAddWine}
             style={{ width: '100%', background: '#2A1F17', border: '2px solid #78350F', borderRadius: '24px', padding: '48px 24px', color: 'white', fontSize: '1.5rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
             <span style={{ fontSize: '3rem' }}>➕</span>
             Add a Wine
@@ -309,143 +308,214 @@ export default function App() {
     )
   }
 
-  // ── SCAN ─────────────────────────────────────────────────
-  if (screen === 'scan') {
+  if (screen === 'scan') return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
+        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Scan Wine List</h2>
+      </div>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {!isCameraActive ? (
+          <button onClick={() => setIsCameraActive(true)}
+            style={{ width: '100%', background: '#B45309', border: 'none', borderRadius: '24px', padding: '48px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '3rem' }}>📷</span>Open Camera
+          </button>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ borderRadius: '16px', overflow: 'hidden', background: 'black' }}>
+              <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'environment' }} style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={capturePhoto} style={{ flex: 1, background: 'white', color: 'black', border: 'none', borderRadius: '12px', padding: '16px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>📸 Capture Page</button>
+              <button onClick={() => setIsCameraActive(false)} style={{ flex: 1, background: '#2A1F17', color: 'white', border: 'none', borderRadius: '12px', padding: '16px', cursor: 'pointer' }}>Close</button>
+            </div>
+          </div>
+        )}
+        {scannedImages.length > 0 && (
+          <div>
+            <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Captured pages ({scannedImages.length})</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
+              {scannedImages.map(img => (
+                <div key={img.id} style={{ position: 'relative' }}>
+                  <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
+                  <button onClick={() => setScannedImages(prev => prev.filter(i => i.id !== img.id))}
+                    style={{ position: 'absolute', top: '4px', right: '4px', background: '#DC2626', border: 'none', borderRadius: '50%', width: '20px', height: '20px', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={() => setIsCameraActive(true)} style={s.secondaryBtn}>+ Add Page</button>
+              <button onClick={() => { setQuizStep(0); setScreen('quiz') }}
+                style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
+                Recommend Now →
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+
+  if (screen === 'addWine') return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
+        <h2 style={{ margin: 0 }}>Add a Wine</h2>
+      </div>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <p style={{ textAlign: 'center', color: '#FCD34D' }}>How would you like to add this wine?</p>
+        <button onClick={() => setLabelCameraActive(true)}
+          style={{ width: '100%', background: '#B45309', border: 'none', borderRadius: '24px', padding: '36px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '3rem' }}>📷</span>
+          Scan Wine Label
+          <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: '#FDE68A' }}>AI reads the label automatically</span>
+        </button>
+        <button onClick={() => setScreen('addWineForm')}
+          style={{ width: '100%', background: '#2A1F17', border: '2px solid #78350F', borderRadius: '24px', padding: '36px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '3rem' }}>✏️</span>
+          Enter by Hand
+          <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: '#FCD34D' }}>Fill in what you know</span>
+        </button>
+        {labelCameraActive && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div style={{ borderRadius: '16px', overflow: 'hidden', background: 'black' }}>
+              <Webcam ref={labelCamRef} audio={false} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'environment' }} style={{ width: '100%' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '12px' }}>
+              <button onClick={scanWineLabel} style={{ flex: 1, background: 'white', color: 'black', border: 'none', borderRadius: '12px', padding: '16px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>📸 Read Label</button>
+              <button onClick={() => setLabelCameraActive(false)} style={{ flex: 1, background: '#2A1F17', color: 'white', border: 'none', borderRadius: '12px', padding: '16px', cursor: 'pointer' }}>Close</button>
+            </div>
+          </div>
+        )}
+        {isParsingLabel && <div style={{ textAlign: 'center', padding: '20px', color: '#FCD34D' }}>🍷 Reading label...</div>}
+      </div>
+    </div>
+  )
+
+  if (screen === 'addWineForm') return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <button onClick={() => setScreen('addWine')} style={s.backBtn}>← Back</button>
+        <h2 style={{ margin: 0 }}>Wine Details</h2>
+      </div>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto' as const }}>
+        <p style={{ color: '#FCD34D', fontSize: '0.9rem', margin: 0 }}>Fill in what you know — everything except the name is optional</p>
+        {[
+          { label: 'Wine Name *', key: 'name', placeholder: 'e.g. Caymus Cabernet Sauvignon' },
+          { label: 'Producer / Winery', key: 'producer', placeholder: 'e.g. Caymus Vineyards' },
+          { label: 'Vintage (Year)', key: 'vintage', placeholder: 'e.g. 2021' },
+          { label: 'Grape(s)', key: 'grapes', placeholder: 'e.g. Cabernet Sauvignon' },
+          { label: 'Region', key: 'region', placeholder: 'e.g. Napa Valley' },
+          { label: 'Tasting Notes', key: 'tasting_notes', placeholder: 'What did it taste like?' },
+        ].map(field => (
+          <div key={field.key}>
+            <label style={s.label}>{field.label}</label>
+            <input value={newWine[field.key as keyof NewWine]} onChange={e => setNewWine(prev => ({ ...prev, [field.key]: e.target.value }))} placeholder={field.placeholder} style={s.input} />
+          </div>
+        ))}
+        <div>
+          <label style={s.label}>Country</label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+            {COUNTRIES.map(c => (
+              <button key={c} onClick={() => setNewWine(prev => ({ ...prev, country: prev.country === c ? '' : c }))}
+                style={{ padding: '12px', borderRadius: '12px', border: '1px solid', cursor: 'pointer', background: newWine.country === c ? '#B45309' : '#2A1F17', borderColor: newWine.country === c ? '#FCD34D' : '#78350F', color: 'white', fontSize: '0.85rem' }}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <label style={s.label}>Color</label>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' as const }}>
+            {COLORS.map(c => (
+              <button key={c} onClick={() => setNewWine(prev => ({ ...prev, color: prev.color === c ? '' : c }))}
+                style={{ padding: '10px 16px', borderRadius: '12px', border: '1px solid', cursor: 'pointer', background: newWine.color === c ? '#B45309' : '#2A1F17', borderColor: newWine.color === c ? '#FCD34D' : '#78350F', color: 'white', fontSize: '0.85rem' }}>
+                {c}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button onClick={() => { if (!newWine.name.trim()) { alert('Please enter the wine name'); return; } setRatingUserIndex(0); setScreen('rateWine') }}
+          style={{ ...s.primaryBtn, marginTop: '8px' }}>
+          Next: Rate This Wine →
+        </button>
+      </div>
+    </div>
+  )
+
+  if (screen === 'rateWine') {
+    const currentUser = userRatings[ratingUserIndex]
+    const isLastUser = ratingUserIndex === userRatings.length - 1
     return (
       <div style={s.page}>
         <div style={s.header}>
-          <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
-          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Scan Wine List</h2>
+          <button onClick={() => ratingUserIndex === 0 ? setScreen('addWineForm') : setRatingUserIndex(i => i - 1)} style={s.backBtn}>← Back</button>
+          <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Rate: {newWine.name}</h2>
         </div>
         <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {!isCameraActive ? (
-            <button onClick={() => setIsCameraActive(true)}
-              style={{ width: '100%', background: '#B45309', border: 'none', borderRadius: '24px', padding: '48px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-              <span style={{ fontSize: '3rem' }}>📷</span>
-              Open Camera
-            </button>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{ borderRadius: '16px', overflow: 'hidden', background: 'black' }}>
-                <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'environment' }} style={{ width: '100%' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={capturePhoto} style={{ flex: 1, background: 'white', color: 'black', border: 'none', borderRadius: '12px', padding: '16px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>📸 Capture Page</button>
-                <button onClick={() => setIsCameraActive(false)} style={{ flex: 1, background: '#2A1F17', color: 'white', border: 'none', borderRadius: '12px', padding: '16px', cursor: 'pointer' }}>Close</button>
-              </div>
+          {userRatings.length > 1 && (
+            <div style={{ background: '#2A1F17', borderRadius: '16px', padding: '16px', textAlign: 'center' }}>
+              <p style={{ margin: 0, color: '#FCD34D', fontSize: '1.1rem', fontWeight: 'bold' }}>Rating for: {currentUser?.user_name}</p>
+              <p style={{ margin: '4px 0 0', color: '#92400E', fontSize: '0.85rem' }}>{ratingUserIndex + 1} of {userRatings.length} people</p>
             </div>
           )}
-          {scannedImages.length > 0 && (
-            <div>
-              <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Captured pages ({scannedImages.length})</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
-                {scannedImages.map(img => (
-                  <div key={img.id} style={{ position: 'relative' }}>
-                    <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
-                    <button onClick={() => setScannedImages(prev => prev.filter(i => i.id !== img.id))}
-                      style={{ position: 'absolute', top: '4px', right: '4px', background: '#DC2626', border: 'none', borderRadius: '50%', width: '20px', height: '20px', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '12px' }}>
-                <button onClick={() => setIsCameraActive(true)} style={s.secondaryBtn}>+ Add Page</button>
-                <button onClick={() => { setQuizStep(0); setScreen('quiz') }}
-                  style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
-                  Recommend Now →
+          <div>
+            <label style={s.label}>How was it?</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {RATINGS.map(r => (
+                <button key={r} onClick={() => updateRating('rating', currentUser?.rating === r ? '' : r)}
+                  style={{ padding: '16px', borderRadius: '12px', border: '2px solid', cursor: 'pointer', background: currentUser?.rating === r ? '#B45309' : '#2A1F17', borderColor: currentUser?.rating === r ? '#FCD34D' : '#78350F', color: 'white', fontSize: '1rem', fontWeight: 'bold' }}>
+                  {r === 'Amazing' ? '🤩 Amazing' : r === 'Good' ? '😊 Good' : r === 'Fine' ? '😐 Fine' : '😞 Bad'}
                 </button>
-              </div>
+              ))}
             </div>
-          )}
+          </div>
+          <div>
+            <label style={s.label}>Value for money? (optional)</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {VALUE_RATINGS.map(r => (
+                <button key={r} onClick={() => updateRating('value_rating', currentUser?.value_rating === r ? '' : r)}
+                  style={{ padding: '14px', borderRadius: '12px', border: '1px solid', cursor: 'pointer', background: currentUser?.value_rating === r ? '#B45309' : '#2A1F17', borderColor: currentUser?.value_rating === r ? '#FCD34D' : '#78350F', color: 'white', fontSize: '0.9rem' }}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label style={s.label}>Price paid (optional)</label>
+            <input type="number" value={currentUser?.price || ''} onChange={e => updateRating('price', e.target.value)} placeholder="e.g. 65" style={s.input} />
+          </div>
+          <div>
+            <label style={s.label}>Notes (optional)</label>
+            <input value={currentUser?.notes || ''} onChange={e => updateRating('notes', e.target.value)} placeholder="Anything else to remember?" style={s.input} />
+          </div>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button onClick={() => { updateRating('rating', ''); updateRating('value_rating', ''); updateRating('price', ''); goToNextRating() }} style={s.secondaryBtn}>Skip Rating</button>
+            <button onClick={goToNextRating} disabled={isSaving}
+              style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '18px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer', opacity: isSaving ? 0.6 : 1 }}>
+              {isSaving ? 'Saving...' : isLastUser ? '💾 Save Wine' : 'Next Person →'}
+            </button>
+          </div>
         </div>
       </div>
     )
   }
 
-  // ── QUIZ ─────────────────────────────────────────────────
   if (screen === 'quiz') {
     const steps = [
-      {
-        title: 'What type of wine?',
-        content: (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            {['🔴 Red', '⚪ White', '🌸 Rosé', '🥂 Sparkling', '🍯 Dessert', '🤷 No Preference'].map(opt =>
-              optionBtn(opt, opt, wineColor, setWineColor)
-            )}
-          </div>
-        ),
-      },
-      {
-        title: 'Price range on the menu?',
-        content: (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', color: '#FCD34D', fontSize: '0.9rem', marginBottom: '6px' }}>Min ($)</label>
-                <input type="number" value={priceMin} onChange={e => setPriceMin(e.target.value)} placeholder="0" style={s.input} />
-              </div>
-              <span style={{ color: '#FCD34D', paddingBottom: '14px' }}>—</span>
-              <div style={{ flex: 1 }}>
-                <label style={{ display: 'block', color: '#FCD34D', fontSize: '0.9rem', marginBottom: '6px' }}>Max ($)</label>
-                <input type="number" value={priceMax} onChange={e => setPriceMax(e.target.value)} placeholder="200" style={s.input} />
-              </div>
-            </div>
-            <button onClick={() => { setPriceMin(''); setPriceMax('') }} style={s.secondaryBtn}>No Price Preference</button>
-          </div>
-        ),
-      },
-      {
-        title: 'How full-bodied?',
-        content: (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {['Light', 'Medium', 'Full', 'No Preference'].map(opt => optionBtn(opt, opt, wineBody, setWineBody))}
-          </div>
-        ),
-      },
-      {
-        title: 'Prioritize best value for money?',
-        content: (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {['Yes — find me the best deal', 'No — best match only', 'No Preference'].map(opt =>
-              optionBtn(opt, opt, bestValue, setBestValue)
-            )}
-          </div>
-        ),
-      },
-      {
-        title: 'Country preference?',
-        content: (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            {[...COUNTRIES, 'No Preference'].map(opt => optionBtn(opt, opt, wineCountry, setWineCountry))}
-          </div>
-        ),
-      },
-      {
-        title: 'Oak preference?',
-        content: (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {['Low oak / Unoaked', 'Some oak', 'Heavily oaked', 'No Preference'].map(opt =>
-              optionBtn(opt, opt, wineOak, setWineOak)
-            )}
-          </div>
-        ),
-      },
-      {
-        title: 'Tannin preference?',
-        content: (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {['Soft / Low tannins', 'Medium tannins', 'Bold / High tannins', 'No Preference'].map(opt =>
-              optionBtn(opt, opt, wineTannin, setWineTannin)
-            )}
-          </div>
-        ),
-      },
+      { title: 'What type of wine?', content: (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>{['🔴 Red', '⚪ White', '🌸 Rosé', '🥂 Sparkling', '🍯 Dessert', '🤷 No Preference'].map(opt => optionBtn(opt, opt, wineColor, setWineColor))}</div>) },
+      { title: 'Price range on the menu?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}><div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}><div style={{ flex: 1 }}><label style={s.label}>Min ($)</label><input type="number" value={priceMin} onChange={e => setPriceMin(e.target.value)} placeholder="0" style={s.input} /></div><span style={{ color: '#FCD34D', paddingBottom: '14px' }}>—</span><div style={{ flex: 1 }}><label style={s.label}>Max ($)</label><input type="number" value={priceMax} onChange={e => setPriceMax(e.target.value)} placeholder="200" style={s.input} /></div></div><button onClick={() => { setPriceMin(''); setPriceMax('') }} style={s.secondaryBtn}>No Price Preference</button></div>) },
+      { title: 'How full-bodied?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Light', 'Medium', 'Full', 'No Preference'].map(opt => optionBtn(opt, opt, wineBody, setWineBody))}</div>) },
+      { title: 'Prioritize best value?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Yes — find me the best deal', 'No — best match only', 'No Preference'].map(opt => optionBtn(opt, opt, bestValue, setBestValue))}</div>) },
+      { title: 'Country preference?', content: (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>{[...COUNTRIES, 'No Preference'].map(opt => optionBtn(opt, opt, wineCountry, setWineCountry))}</div>) },
+      { title: 'Oak preference?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Low oak / Unoaked', 'Some oak', 'Heavily oaked', 'No Preference'].map(opt => optionBtn(opt, opt, wineOak, setWineOak))}</div>) },
+      { title: 'Tannin preference?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Soft / Low tannins', 'Medium tannins', 'Bold / High tannins', 'No Preference'].map(opt => optionBtn(opt, opt, wineTannin, setWineTannin))}</div>) },
     ]
-
     const step = steps[quizStep]
     return (
       <div style={s.page}>
         <div style={s.header}>
-          <button onClick={() => (quizStep === 0 ? setScreen('scan') : setQuizStep(q => q - 1))} style={s.backBtn}>← Back</button>
+          <button onClick={() => quizStep === 0 ? setScreen('scan') : setQuizStep(q => q - 1)} style={s.backBtn}>← Back</button>
           <h2 style={{ margin: 0, fontSize: '1.1rem' }}>Question {quizStep + 1} of {steps.length}</h2>
         </div>
         <div style={{ height: '4px', background: '#2A1F17' }}>
@@ -459,9 +529,7 @@ export default function App() {
           {quizStep < steps.length - 1 ? (
             <>
               <button onClick={() => setQuizStep(q => q + 1)} style={s.secondaryBtn}>Next Question →</button>
-              <button onClick={callGrok} style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '18px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>
-                Select Wine Now! 🍷
-              </button>
+              <button onClick={callGrok} style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '18px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>Select Wine Now! 🍷</button>
             </>
           ) : (
             <button onClick={callGrok} style={s.primaryBtn}>Find My Wines! 🍷</button>
@@ -471,12 +539,8 @@ export default function App() {
     )
   }
 
-  // ── RESULTS ───────────────────────────────────────────────
   if (screen === 'results') {
-    const filtered = priceFilter
-      ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max)
-      : recommendations
-
+    const filtered = priceFilter ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max) : recommendations
     return (
       <div style={s.page}>
         <div style={s.header}>
@@ -494,18 +558,13 @@ export default function App() {
             <>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' as const }}>
                 {[{ label: 'All Prices', min: 0, max: 99999 }, { label: 'Under $50', min: 0, max: 50 }, { label: '$50–$100', min: 50, max: 100 }, { label: '$100+', min: 100, max: 99999 }].map(f => (
-                  <button key={f.label}
-                    onClick={() => f.label === 'All Prices' ? setPriceFilter(null) : setPriceFilter({ min: f.min, max: f.max })}
+                  <button key={f.label} onClick={() => f.label === 'All Prices' ? setPriceFilter(null) : setPriceFilter({ min: f.min, max: f.max })}
                     style={{ padding: '8px 16px', borderRadius: '20px', border: '1px solid', cursor: 'pointer', background: (f.label === 'All Prices' && !priceFilter) || priceFilter?.min === f.min ? '#B45309' : '#2A1F17', borderColor: (f.label === 'All Prices' && !priceFilter) || priceFilter?.min === f.min ? '#FCD34D' : '#78350F', color: 'white', fontSize: '0.85rem' }}>
                     {f.label}
                   </button>
                 ))}
               </div>
-
-              {filtered.length === 0 && recommendations.length > 0 && (
-                <p style={{ textAlign: 'center', color: '#92400E', padding: '40px' }}>No wines match this price filter.</p>
-              )}
-
+              {filtered.length === 0 && recommendations.length > 0 && <p style={{ textAlign: 'center', color: '#92400E', padding: '40px' }}>No wines match this price filter.</p>}
               {filtered.map((rec, i) => (
                 <div key={i} style={s.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
@@ -522,9 +581,7 @@ export default function App() {
                     <p style={{ margin: 0, fontSize: '0.9rem', color: '#FDE68A' }}>🎯 {rec.why_it_matches}</p>
                   </div>
                   <p style={{ margin: '8px 0 0', fontSize: '0.85rem', color: '#D4A574' }}>👅 {rec.tasting_notes}</p>
-                  {rec.potential_drawbacks && (
-                    <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: '#92400E' }}>⚠️ {rec.potential_drawbacks}</p>
-                  )}
+                  {rec.potential_drawbacks && <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: '#92400E' }}>⚠️ {rec.potential_drawbacks}</p>}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
                     <div style={{ flex: 1, height: '6px', background: '#1F1209', borderRadius: '3px' }}>
                       <div style={{ height: '100%', background: '#B45309', borderRadius: '3px', width: (rec.similarity_score / 10 * 100) + '%' }} />
@@ -533,7 +590,6 @@ export default function App() {
                   </div>
                 </div>
               ))}
-
               {recommendations.length > 0 && (
                 <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
                   <button onClick={callGrok} style={s.secondaryBtn}>🔄 More Recommendations</button>
@@ -547,48 +603,19 @@ export default function App() {
     )
   }
 
-  // ── ADD WINE ──────────────────────────────────────────────
-  if (screen === 'addWine') {
-    return (
-      <div style={s.page}>
-        <div style={s.header}>
-          <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
-          <h2 style={{ margin: 0 }}>Add a Wine</h2>
-        </div>
-        <div style={{ padding: '24px', textAlign: 'center', color: '#92400E', marginTop: '80px', fontSize: '1.1rem' }}>
-          Coming next — scan label or enter by hand
-        </div>
+  if (screen === 'settings') return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
+        <h2 style={{ margin: 0 }}>Settings</h2>
       </div>
-    )
-  }
-
-  // ── SETTINGS ─────────────────────────────────────────────
-  if (screen === 'settings') {
-    return (
-      <div style={s.page}>
-        <div style={s.header}>
-          <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
-          <h2 style={{ margin: 0 }}>Settings</h2>
-        </div>
-        <div style={{ padding: '24px' }}>
-          <label style={{ display: 'block', color: '#FCD34D', marginBottom: '8px', fontSize: '0.9rem' }}>Grok API Key</label>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder="xai-..."
-            style={s.input}
-          />
-          <button
-            onClick={() => { localStorage.setItem('grokApiKey', apiKey); alert('Saved!') }}
-            style={{ ...s.primaryBtn, marginTop: '16px' }}
-          >
-            Save API Key
-          </button>
-        </div>
+      <div style={{ padding: '24px' }}>
+        <label style={s.label}>Grok API Key</label>
+        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="xai-..." style={s.input} />
+        <button onClick={() => { localStorage.setItem('grokApiKey', apiKey); alert('Saved!') }} style={{ ...s.primaryBtn, marginTop: '16px' }}>Save API Key</button>
       </div>
-    )
-  }
+    </div>
+  )
 
   return null
 }
