@@ -104,6 +104,8 @@ async function extractTextWithVision(dataUrl: string): Promise<string> {
     }
   )
   const data = await response.json()
+  if (data.error) throw new Error('Vision error: ' + JSON.stringify(data.error))
+  if (data.responses?.[0]?.error) throw new Error('Vision response error: ' + JSON.stringify(data.responses[0].error))
   return data.responses?.[0]?.fullTextAnnotation?.text || ''
 }
 
@@ -406,8 +408,8 @@ If no wines are found in the text, return:
       setExtractedWines(parsed.extracted_wines || [])
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
-    } catch (err) {
-      console.error(err); alert('Something went wrong. Please try again.'); setScreen('quiz')
+    } catch (err: any) {
+      alert('Error: ' + (err?.message || String(err))); setScreen('quiz')
     } finally { setIsLoading(false); setOcrStatus('') }
   }
 
