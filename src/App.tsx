@@ -62,7 +62,7 @@ interface UserRating {
   notes: string
 }
 
-type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'addWineForm' | 'rateWine' | 'settings' | 'admin'
+type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'addWineForm' | 'rateWine' | 'admin'
 
 const COUNTRIES = ['USA', 'France', 'Italy', 'Spain', 'Australia/New Zealand', 'South America', 'Germany/Austria', 'Other']
 const COLORS = ['Red', 'White', 'Rosé', 'Sparkling', 'Dessert']
@@ -414,9 +414,13 @@ export default function App() {
   if (screen === 'startup') return (
     <div style={s.page}>
       {showHelp && <HelpPopup />}
-      <div style={{ background: '#3C2A1F', padding: '20px', textAlign: 'center' }}>
-        <h1 onClick={handleLogoTap} style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0, cursor: 'pointer', userSelect: 'none' as const }}>🍷 WineMatch</h1>
-        <p style={{ color: '#FCD34D', margin: '4px 0 0' }}>Your personal AI sommelier</p>
+      <div style={{ background: '#3C2A1F', padding: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ width: '36px' }} />
+        <div style={{ textAlign: 'center' }}>
+          <h1 onClick={handleLogoTap} style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0, cursor: 'pointer', userSelect: 'none' as const }}>🍷 WineMatch</h1>
+          <p style={{ color: '#FCD34D', margin: '4px 0 0', fontSize: '0.9rem' }}>Your personal AI sommelier</p>
+        </div>
+        <button onClick={() => setShowHelp(true)} style={{ background: 'none', border: '1px solid #78350F', borderRadius: '50%', width: '36px', height: '36px', color: '#FCD34D', cursor: 'pointer', fontSize: '1rem', fontWeight: 'bold', flexShrink: 0 }}>?</button>
       </div>
       <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column' }}>
         <h2 style={{ textAlign: 'center', fontSize: '1.4rem', marginBottom: '8px' }}>Who are we recommending for today?</h2>
@@ -454,10 +458,7 @@ export default function App() {
         {showHelp && <HelpPopup />}
         <div style={{ background: '#3C2A1F', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ fontSize: '1.8rem', color: '#FEF3C7', margin: 0 }}>🍷 WineMatch</h1>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button onClick={() => setShowHelp(true)} style={{ background: 'none', border: '1px solid #78350F', borderRadius: '50%', width: '36px', height: '36px', color: '#FCD34D', cursor: 'pointer', fontSize: '1rem', fontWeight: 'bold' }}>?</button>
-            <button onClick={() => setScreen('settings')} style={{ background: 'none', border: 'none', color: '#FCD34D', cursor: 'pointer', fontSize: '1.5rem' }}>⚙️</button>
-          </div>
+          <button onClick={() => setShowHelp(true)} style={{ background: 'none', border: '1px solid #78350F', borderRadius: '50%', width: '36px', height: '36px', color: '#FCD34D', cursor: 'pointer', fontSize: '1rem', fontWeight: 'bold' }}>?</button>
         </div>
         <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
           <p style={{ textAlign: 'center', color: '#FCD34D' }}>Recommending for: <strong style={{ color: 'white' }}>{names || 'Everyone'}</strong></p>
@@ -516,6 +517,11 @@ export default function App() {
                   </button>
                 )}
               </div>
+              <div style={{ background: '#1F1209', borderRadius: '12px', padding: '12px', margin: '10px 0' }}>
+                <p style={{ margin: '0 0 6px', fontSize: '0.8rem', color: '#FCD34D', fontWeight: 'bold' }}>✍️ TASTE PROFILE — What do they like in their own words?</p>
+                <p style={{ margin: '0 0 8px', fontSize: '0.75rem', color: '#92400E' }}>This goes directly to Grok with every recommendation.</p>
+              </div>
+
               {editingProfile?.id === u.id ? (
                 <div>
                   <label style={s.label}>Taste Profile</label>
@@ -873,20 +879,7 @@ export default function App() {
     )
   }
 
-  // ── SETTINGS ─────────────────────────────────────────────
-  if (screen === 'settings') return (
-    <div style={s.page}>
-      <div style={s.header}>
-        <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
-        <h2 style={{ margin: 0 }}>Settings</h2>
-      </div>
-      <div style={{ padding: '24px' }}>
-        <p style={{ color: '#FCD34D', fontSize: '0.9rem' }}>
-          The master Grok API key is built into the app. To manage users or taste profiles, tap the 🍷 logo 3 times on the startup screen to open Admin.
-        </p>
-      </div>
-    </div>
-  )
+
 
   return null
 }
