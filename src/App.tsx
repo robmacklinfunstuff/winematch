@@ -341,7 +341,7 @@ export default function App() {
       const fullMenuText = ocrTexts.join('\n\n--- NEXT PAGE ---\n\n')
 
       if (!fullMenuText.trim()) {
-        alert('Vision returned no text. Key present: ' + !!VISION_API_KEY + ' | OCR texts: ' + ocrTexts.length + ' | First response length: ' + (ocrTexts[0]?.length || 0))
+        alert('Could not read any text from the images. Please try clearer photos.')
         setScreen('quiz')
         return
       }
