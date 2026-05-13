@@ -70,7 +70,7 @@ const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
 const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 // ── Image compression helper ──────────────────────────────
-function compressImage(dataUrl: string, maxWidth = 600, quality = 0.4): Promise<string> {
+function compressImage(dataUrl: string, maxWidth = 400, quality = 0.25): Promise<string> {
   return new Promise(resolve => {
     const img = new Image()
     img.onload = () => {
@@ -653,7 +653,7 @@ If no wines are readable, return:
           {/* Captured pages */}
           {scannedImages.length > 0 && (
             <div>
-              <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Added pages ({scannedImages.length})</p>
+              <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Added pages ({scannedImages.length}) — tap Recommend Now when done</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
                 {scannedImages.map(img => (
                   <div key={img.id} style={{ position: 'relative' }}>
