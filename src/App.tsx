@@ -403,6 +403,7 @@ If no wines are readable, return:
       if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
       const content = data.choices?.[0]?.message?.content || '{}'
       const parsed = JSON.parse(content.replace(/```json|```/g, '').trim())
+      setExtractedWines(parsed.extracted_wines || [])
       console.log('Extracted wines from menu:', parsed.extracted_wines)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
@@ -848,6 +849,9 @@ If no wines are readable, return:
   }
 
   // ── RESULTS ───────────────────────────────────────────────
+  const [showExtracted, setShowExtracted] = useState(false)
+  const [extractedWines, setExtractedWines] = useState<any[]>([])
+
   if (screen === 'results') {
     const filtered = priceFilter ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max) : recommendations
     return (
@@ -864,7 +868,34 @@ If no wines are readable, return:
               <p style={{ color: '#92400E', fontSize: '0.9rem' }}>This takes about 15 seconds</p>
             </div>
           ) : (
+            
             <>
+              {/* Debug panel — shows what Grok read from the menu */}
+              <div style={{ background: '#1A1A2E', borderRadius: '16px', border: '1px solid #4A4A8A', overflow: 'hidden' }}>
+                <button
+                  onClick={() => setShowExtracted(p => !p)}
+                  style={{ width: '100%', background: 'none', border: 'none', padding: '12px 16px', color: '#A0A0FF', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
+                  <span>🔍 What Grok read from the menu ({extractedWines.length} wines)</span>
+                  <span>{showExtracted ? '▲' : '▼'}</span>
+                </button>
+                {showExtracted && (
+                  <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {extractedWines.length === 0 ? (
+                      <p style={{ color: '#FF6B6B', fontSize: '0.85rem', margin: 0 }}>⚠️ Grok could not read any wines from the image. Try a clearer photo.</p>
+                    ) : (
+                      extractedWines.map((w, i) => (
+                        <div key={i} style={{ background: '#2A2A4A', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', color: '#C0C0FF' }}>
+                          <strong>{w.wine_name}</strong>
+                          {w.producer ? ' — ' + w.producer : ''}
+                          {w.vintage ? ' ' + w.vintage : ''}
+                          {w.menu_price ? <span style={{ color: '#A0FFA0', marginLeft: '8px' }}>${w.menu_price}</span> : ''}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' as const }}>
                 {[{ label: 'All Prices', min: 0, max: 99999 }, { label: 'Under $50', min: 0, max: 50 }, { label: '$50–$100', min: 50, max: 100 }, { label: '$100+', min: 100, max: 99999 }].map(f => (
                   <button key={f.label} onClick={() => f.label === 'All Prices' ? setPriceFilter(null) : setPriceFilter({ min: f.min, max: f.max })}
