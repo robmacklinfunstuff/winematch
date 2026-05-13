@@ -1,5 +1,4 @@
 import { useState, useRef } from 'react'
-import { Camera, Plus, Settings } from 'lucide-react'
 import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
 
