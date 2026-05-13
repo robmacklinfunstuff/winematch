@@ -90,6 +90,7 @@ function compressImage(dataUrl: string, maxWidth = 600, quality = 0.4): Promise<
 // ── Google Vision OCR ─────────────────────────────────────
 async function extractTextWithVision(dataUrl: string): Promise<string> {
   const base64 = dataUrl.split(',')[1]
+  if (!base64) throw new Error('No base64 data in image')
   const response = await fetch(
     `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`,
     {
@@ -104,8 +105,8 @@ async function extractTextWithVision(dataUrl: string): Promise<string> {
     }
   )
   const data = await response.json()
-  if (data.error) throw new Error('Vision error: ' + JSON.stringify(data.error))
-  if (data.responses?.[0]?.error) throw new Error('Vision response error: ' + JSON.stringify(data.responses[0].error))
+  const visionError = data.error || data.responses?.[0]?.error
+  if (visionError) throw new Error('Vision: ' + visionError.code + ' ' + visionError.message)
   return data.responses?.[0]?.fullTextAnnotation?.text || ''
 }
 
