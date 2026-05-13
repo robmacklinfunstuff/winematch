@@ -61,7 +61,8 @@ export default function App() {
   const [newUserName, setNewUserName] = useState('')
   const [scannedImages, setScannedImages] = useState<ScannedImage[]>([])
   const [isCameraActive, setIsCameraActive] = useState(false)
-  const [apiKey] = useState(localStorage.getItem('grokApiKey') || '')
+  const [apiKey, setApiKey] = useState(localStorage.getItem('grokApiKey') || '')
+  const [tempKey, setTempKey] = useState(localStorage.getItem('grokApiKey') || '')
   const webcamRef = useRef<Webcam>(null)
 
   // Quiz state
