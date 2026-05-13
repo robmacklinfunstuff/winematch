@@ -6,7 +6,7 @@ import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, delet
 const MASTER_API_KEY = import.meta.env.VITE_GROK_API_KEY || ''
 
 // ── Personality — change this to adjust Grok's tone ──────
-const GROK_PERSONALITY = `You have a fun, sassy, opinionated personality. You are confident in your recommendations, use light humor, and are not afraid to be dramatic about bad wine choices. Think knowledgeable best friend at a restaurant, not stuffy sommelier. Keep it fun but always back up your opinions with real wine knowledge.`
+const GROK_PERSONALITY = `You have a fun, sassy, opinionated personality. You are confident in your recommendations, use light humor, and are not afraid to be dramatic about bad wine choices. Think knowledgeable best friend at a restaurant, not stuffy sommelier. Keep it fun but always back up your opinions with real wine knowledge. You never reccommend a wine not on the wine list.`
 
 interface AppUser {
   id: string
@@ -154,6 +154,9 @@ export default function App() {
     if (!imageSrc) return
     const compressed = await compressImage(imageSrc)
     setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: compressed }])
+    // Release camera stream so flashlight becomes available
+    const stream = webcamRef.current?.video?.srcObject as MediaStream
+    if (stream) stream.getTracks().forEach(track => track.stop())
     setIsCameraActive(false)
   }
 
@@ -317,28 +320,73 @@ export default function App() {
     const wineHistory = allWines.length > 0 ? 'Past wine ratings:\n' + JSON.stringify(allWines) : 'No past wine history — rely on stated preferences.'
 
     const promptText = GROK_PERSONALITY + '\n\n' +
-      'You are recommending wines for: ' + selectedUserNames + '\n\n' +
-      'USER PROFILES:\n' + userContext + '\n\n' +
-      'CRITICAL RULE: You may ONLY recommend wines explicitly visible in the scanned wine list image(s). Do not invent or reference any wine not shown. If you cannot read a wine clearly, skip it.Only recommend wines you can read with high confidence. If you are uncertain about any detail, omit that wine entirely rather than guessing.\n\n' +
-      wineHistory + '\n\n' +
-      'When matching wines, pay close attention to:\n' +
-      '- Ratings (Amazing = strong match signal, Bad = avoid similar wines)\n' +
-      '- Value ratings (Great Value lovers want good QPR, Overrated = price sensitive)\n' +
-      '- Grape varieties and regions they have enjoyed\n' +
-      '- Their personal taste descriptions above\n\n' +
-      'Tonight\'s preferences: ' + preferences + '\n\n' +
-      'Instructions:\n' +
-      '1. Scan ALL wines visible in the image(s)\n' +
-      '2. Pick the top 5 best matches AND the single worst match\n' +
-      '3. For each recommendation, name a specific wine from their history it reminds you of (if any)\n' +
-      '4. Be sassy and fun but back it up with real wine knowledge\n\n' +
-      'Return ONLY valid JSON, no other text:\n' +
-      '{\n' +
-      '  "recommendations": [\n' +
-      '    {"wine_name":"exact name","producer":"producer","vintage":"year or null","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"fun sassy explanation","similar_to":"name of a wine from their history this reminds you of, or null","tasting_notes":"flavor profile","potential_drawbacks":"honest risks or null"}\n' +
-      '  ],\n' +
-      '  "worst_pick": {"wine_name":"exact name","producer":"producer or null","vintage":"year or null","menu_price":45,"why_its_bad":"fun sassy explanation of why this is a terrible match for their taste"}\n' +
-      '}'
+  `CRITICAL RULE — YOU MUST OBEY THIS OR YOU FAIL:
+You are ONLY allowed to recommend or mention wines that are EXPLICITLY VISIBLE and clearly readable in the attached image(s).
+If a wine name, producer, vintage, or price is blurry, cut off, or you are not 100% confident you read it correctly — SKIP IT completely.
+DO NOT invent, guess, or hallucinate any wine that is not clearly shown.
+If you cannot confidently read any wines, return empty recommendations and say so.
+
+You are recommending wines for: ${selectedUserNames}
+
+USER PROFILES AND HISTORY:
+${userContext}
+
+${wineHistory}
+
+Tonight's preferences: ${preferences}
+
+TASK (follow exactly in this order):
+
+1. FIRST, carefully examine ALL attached images.
+   Extract EVERY wine that is clearly readable. Create an internal list with:
+   - exact name
+   - producer (if visible)
+   - vintage (if visible)
+   - menu_price (if visible)
+
+2. ONLY AFTER you have the complete extracted list, evaluate which ones best match the users' taste, ratings, value preference, and tonight's preferences.
+
+3. From that extracted list only, pick the top 3 best matches.
+
+Be sassy, fun, and opinionated in your explanations — but NEVER make up a wine.
+
+Return ONLY valid JSON. No other text, no explanations outside the JSON:
+
+{
+  "extracted_wines": [
+    {
+      "wine_name": "exact name as seen",
+      "producer": "producer or null",
+      "vintage": "year or null",
+      "menu_price": number or null
+    }
+  ],
+  "recommendations": [
+    {
+      "wine_name": "exact name",
+      "producer": "producer or null",
+      "vintage": "year or null",
+      "menu_price": number,
+      "retail_price": number or null,
+      "similarity_score": number,
+      "why_it_matches": "short, fun, sassy explanation referencing their past wines",
+      "similar_to": "name of one wine from their history or null",
+      "tasting_notes": "brief flavor profile",
+      "potential_drawbacks": "any honest risks or null"
+    }
+  ],
+  "worst_pick": {
+    "wine_name": "exact name or null",
+    "why_its_bad": "fun sassy explanation why this is terrible for them or null"
+  }
+}
+
+If no wines are readable, return:
+{
+  "extracted_wines": [],
+  "recommendations": [],
+  "worst_pick": null
+}`
 
     try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
@@ -355,6 +403,7 @@ export default function App() {
       if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
       const content = data.choices?.[0]?.message?.content || '{}'
       const parsed = JSON.parse(content.replace(/```json|```/g, '').trim())
+      console.log('Extracted wines from menu:', parsed.extracted_wines)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
     } catch (err) {
