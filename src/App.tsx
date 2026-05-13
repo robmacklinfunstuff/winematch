@@ -69,6 +69,23 @@ const COLORS = ['Red', 'White', 'Rosé', 'Sparkling', 'Dessert']
 const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
 const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
+// ── Image compression helper ──────────────────────────────
+function compressImage(dataUrl: string, maxWidth = 1200, quality = 0.7): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width)
+      const canvas = document.createElement('canvas')
+      canvas.width = img.width * scale
+      canvas.height = img.height * scale
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.src = dataUrl
+  })
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>('startup')
   const [users, setUsers] = useState<AppUser[]>([])
@@ -108,6 +125,7 @@ export default function App() {
   const [isAddingUser, setIsAddingUser] = useState(false)
   const [editingProfile, setEditingProfile] = useState<{ id: string; text: string } | null>(null)
   const [isGeneratingSummary, setIsGeneratingSummary] = useState<string | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => { loadUsers() }, [])
 
@@ -130,9 +148,13 @@ export default function App() {
     setSelectedUsers(prev => prev.includes(id) ? prev.filter(u => u !== id) : [...prev, id])
   }
 
-  const capturePhoto = () => {
+  // ── Capture with compression ──────────────────────────────
+  const capturePhoto = async () => {
     const imageSrc = webcamRef.current?.getScreenshot()
-    if (imageSrc) { setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: imageSrc }]); setIsCameraActive(false) }
+    if (!imageSrc) return
+    const compressed = await compressImage(imageSrc)
+    setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: compressed }])
+    setIsCameraActive(false)
   }
 
   const startAddWine = () => {
@@ -144,18 +166,20 @@ export default function App() {
     setScreen('addWine')
   }
 
+  // ── Scan label with compression ───────────────────────────
   const scanWineLabel = async () => {
     const imageSrc = labelCamRef.current?.getScreenshot()
     if (!imageSrc) return
     setIsParsingLabel(true)
     setLabelCameraActive(false)
     try {
+      const compressed = await compressImage(imageSrc)
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getApiKey() },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: imageSrc, detail: 'high' } }, { type: 'text', text: 'You are a wine expert. Analyze this wine label and extract details. Return ONLY valid JSON:\n{"name":"wine name","producer":"winery","vintage":"year or null","grapes":"grape varieties","region":"region","country":"country","color":"Red or White or Rose or Sparkling or Dessert","tasting_notes":"notes or null"}' }] }],
+          messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: compressed, detail: 'high' } }, { type: 'text', text: 'You are a wine expert. Analyze this wine label and extract details. Return ONLY valid JSON:\n{"name":"wine name","producer":"winery","vintage":"year or null","grapes":"grape varieties","region":"region","country":"country","color":"Red or White or Rose or Sparkling or Dessert","tasting_notes":"notes or null"}' }] }],
           max_tokens: 500
         })
       })
@@ -358,8 +382,38 @@ export default function App() {
     </button>
   )
 
+  // ── HELP POPUP ────────────────────────────────────────────
+  const HelpPopup = () => (
+    <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+      <div style={{ background: '#2A1F17', borderRadius: '24px', padding: '28px', border: '1px solid #78350F', maxWidth: '400px', width: '100%', maxHeight: '80vh', overflowY: 'auto' as const }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2 style={{ margin: 0, color: '#FEF3C7', fontSize: '1.3rem' }}>🍷 How to Use WineMatch</h2>
+          <button onClick={() => setShowHelp(false)} style={{ background: 'none', border: 'none', color: '#FCD34D', fontSize: '1.5rem', cursor: 'pointer' }}>✕</button>
+        </div>
+
+        {[
+          { icon: '👤', title: 'Select Who\'s Drinking', text: 'At startup, tap names to choose who\'s at the table tonight. Grok will combine everyone\'s taste history to make recommendations.' },
+          { icon: '📷', title: 'Scan the Wine List', text: 'Tap "Select a Wine" then open the camera. Take clear photos of each page of the wine list. Add as many pages as needed.' },
+          { icon: '🎯', title: 'Answer the Quiz', text: 'After scanning, answer a few quick questions about what you\'re in the mood for tonight — color, price, body, country, etc. Skip any you don\'t care about.' },
+          { icon: '🍾', title: 'Get Recommendations', text: 'Grok picks the top 5 wines from the actual list that match your taste history and tonight\'s preferences — plus one wine to avoid! Filter by price if you want.' },
+          { icon: '➕', title: 'Add Wines You\'ve Tried', text: 'Tap "Add a Wine" to save wines you\'ve had. Scan the label or enter by hand. Rate it Amazing/Good/Fine/Bad. The more you add, the smarter Grok gets.' },
+          { icon: '👑', title: 'Admin (Tap Logo 3x)', text: 'On the startup screen, tap the 🍷 logo three times to open Admin. Add or remove users and edit taste profiles.' },
+        ].map(item => (
+          <div key={item.title} style={{ marginBottom: '20px' }}>
+            <p style={{ margin: '0 0 4px', fontWeight: 'bold', color: '#FEF3C7' }}>{item.icon} {item.title}</p>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#D4A574', lineHeight: 1.5 }}>{item.text}</p>
+          </div>
+        ))}
+
+        <button onClick={() => setShowHelp(false)} style={{ ...s.primaryBtn, marginTop: '8px' }}>Got it!</button>
+      </div>
+    </div>
+  )
+
+  // ── STARTUP ──────────────────────────────────────────────
   if (screen === 'startup') return (
     <div style={s.page}>
+      {showHelp && <HelpPopup />}
       <div style={{ background: '#3C2A1F', padding: '20px', textAlign: 'center' }}>
         <h1 onClick={handleLogoTap} style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0, cursor: 'pointer', userSelect: 'none' as const }}>🍷 WineMatch</h1>
         <p style={{ color: '#FCD34D', margin: '4px 0 0' }}>Your personal AI sommelier</p>
@@ -392,13 +446,18 @@ export default function App() {
     </div>
   )
 
+  // ── HOME ─────────────────────────────────────────────────
   if (screen === 'home') {
     const names = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(', ')
     return (
       <div style={s.page}>
+        {showHelp && <HelpPopup />}
         <div style={{ background: '#3C2A1F', padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ fontSize: '1.8rem', color: '#FEF3C7', margin: 0 }}>🍷 WineMatch</h1>
-          <button onClick={() => setScreen('settings')} style={{ background: 'none', border: 'none', color: '#FCD34D', cursor: 'pointer', fontSize: '1.5rem' }}>⚙️</button>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button onClick={() => setShowHelp(true)} style={{ background: 'none', border: '1px solid #78350F', borderRadius: '50%', width: '36px', height: '36px', color: '#FCD34D', cursor: 'pointer', fontSize: '1rem', fontWeight: 'bold' }}>?</button>
+            <button onClick={() => setScreen('settings')} style={{ background: 'none', border: 'none', color: '#FCD34D', cursor: 'pointer', fontSize: '1.5rem' }}>⚙️</button>
+          </div>
         </div>
         <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
           <p style={{ textAlign: 'center', color: '#FCD34D' }}>Recommending for: <strong style={{ color: 'white' }}>{names || 'Everyone'}</strong></p>
@@ -420,6 +479,7 @@ export default function App() {
     )
   }
 
+  // ── ADMIN ─────────────────────────────────────────────────
   if (screen === 'admin') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -440,7 +500,6 @@ export default function App() {
             {isAddingUser ? 'Adding...' : '+ Add User'}
           </button>
         </div>
-
         <div>
           <h3 style={{ color: '#FEF3C7', margin: '0 0 12px' }}>Current Users ({users.length})</h3>
           {users.map(u => (
@@ -457,7 +516,6 @@ export default function App() {
                   </button>
                 )}
               </div>
-
               {editingProfile?.id === u.id ? (
                 <div>
                   <label style={s.label}>Taste Profile</label>
@@ -481,14 +539,12 @@ export default function App() {
                   </button>
                 </div>
               )}
-
               {u.taste_summary && (
                 <div style={{ background: '#1F1209', borderRadius: '10px', padding: '10px', marginTop: '8px' }}>
                   <p style={{ margin: '0 0 4px', fontSize: '0.75rem', color: '#92400E' }}>🤖 AI Taste Summary:</p>
                   <p style={{ margin: 0, fontSize: '0.85rem', color: '#D4A574' }}>{u.taste_summary}</p>
                 </div>
               )}
-
               <button onClick={() => handleGenerateSummary(u)} disabled={isGeneratingSummary === u.id}
                 style={{ background: '#1F1209', border: '1px solid #78350F', borderRadius: '8px', padding: '6px 12px', color: '#FCD34D', cursor: 'pointer', fontSize: '0.8rem', marginTop: '8px', opacity: isGeneratingSummary === u.id ? 0.6 : 1 }}>
                 {isGeneratingSummary === u.id ? '⏳ Generating...' : '🤖 Generate Taste Summary'}
@@ -500,6 +556,7 @@ export default function App() {
     </div>
   )
 
+  // ── SCAN ─────────────────────────────────────────────────
   if (screen === 'scan') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -548,6 +605,7 @@ export default function App() {
     </div>
   )
 
+  // ── ADD WINE ──────────────────────────────────────────────
   if (screen === 'addWine') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -584,6 +642,7 @@ export default function App() {
     </div>
   )
 
+  // ── ADD WINE FORM ─────────────────────────────────────────
   if (screen === 'addWineForm') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -635,6 +694,7 @@ export default function App() {
     </div>
   )
 
+  // ── RATE WINE ─────────────────────────────────────────────
   if (screen === 'rateWine') {
     const currentUser = userRatings[ratingUserIndex]
     const isLastUser = ratingUserIndex === userRatings.length - 1
@@ -693,6 +753,7 @@ export default function App() {
     )
   }
 
+  // ── QUIZ ─────────────────────────────────────────────────
   if (screen === 'quiz') {
     const steps = [
       { title: 'What type of wine?', content: (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>{['🔴 Red', '⚪ White', '🌸 Rosé', '🥂 Sparkling', '🍯 Dessert', '🤷 No Preference'].map(opt => optionBtn(opt, opt, wineColor, setWineColor))}</div>) },
@@ -731,6 +792,7 @@ export default function App() {
     )
   }
 
+  // ── RESULTS ───────────────────────────────────────────────
   if (screen === 'results') {
     const filtered = priceFilter ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max) : recommendations
     return (
@@ -785,7 +847,6 @@ export default function App() {
                   </div>
                 </div>
               ))}
-
               {worstPick && (
                 <div style={{ background: '#2D0A0A', borderRadius: '20px', padding: '20px', border: '2px solid #7F1D1D', marginTop: '8px' }}>
                   <h3 style={{ margin: '0 0 8px', color: '#FCA5A5', fontSize: '1rem' }}>💀 The Worst Pick on This List</h3>
@@ -799,7 +860,6 @@ export default function App() {
                   <p style={{ margin: 0, fontSize: '0.9rem', color: '#FECACA', fontStyle: 'italic' }}>😬 {worstPick.why_its_bad}</p>
                 </div>
               )}
-
               {recommendations.length > 0 && (
                 <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
                   <button onClick={callGrok} style={s.secondaryBtn}>🔄 More Recommendations</button>
@@ -813,6 +873,7 @@ export default function App() {
     )
   }
 
+  // ── SETTINGS ─────────────────────────────────────────────
   if (screen === 'settings') return (
     <div style={s.page}>
       <div style={s.header}>
