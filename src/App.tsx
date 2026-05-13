@@ -70,7 +70,7 @@ const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
 const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 // ── Image compression helper ──────────────────────────────
-function compressImage(dataUrl: string, maxWidth = 1200, quality = 0.7): Promise<string> {
+function compressImage(dataUrl: string, maxWidth = 800, quality = 0.5): Promise<string> {
   return new Promise(resolve => {
     const img = new Image()
     img.onload = () => {
