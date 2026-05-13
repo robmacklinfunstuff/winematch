@@ -1,28 +1,15 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
-import { saveWineWithRatings, getWinesForUsers } from './supabase'
+import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser } from './supabase'
 
-interface SavedWine {
-  id: string
-  name: string
-  producer?: string
-  vintage?: string
-  grapes?: string
-  region?: string
-  country?: string
-  color?: string
-  tastingNotes?: string
-  rating: string
-  valueRating?: string
-  price?: number
-  dateAdded: string
-}
+const MASTER_API_KEY = 'xai-BZ2bRZCfIw36HDajOTwIkF55xjCrGye7eCfNwyRgNw61F3nKZaEeetKRRiUIkyTKRP9RaTkGt97gsuFO'
 
 interface AppUser {
   id: string
   name: string
-  wines: SavedWine[]
+  grok_api_key?: string
+  is_admin?: boolean
 }
 
 interface ScannedImage {
@@ -61,16 +48,7 @@ interface UserRating {
   notes: string
 }
 
-type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'addWineForm' | 'rateWine' | 'settings'
-
-function loadUsers(): AppUser[] {
-  const stored = localStorage.getItem('winematch_users')
-  return stored ? JSON.parse(stored) : []
-}
-
-function saveUsers(users: AppUser[]): void {
-  localStorage.setItem('winematch_users', JSON.stringify(users))
-}
+type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'addWineForm' | 'rateWine' | 'settings' | 'admin'
 
 const COUNTRIES = ['USA', 'France', 'Italy', 'Spain', 'Australia/New Zealand', 'South America', 'Germany/Austria', 'Other']
 const COLORS = ['Red', 'White', 'Rosé', 'Sparkling', 'Dessert']
@@ -79,15 +57,15 @@ const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('startup')
-  const [users, setUsers] = useState<AppUser[]>(loadUsers)
+  const [users, setUsers] = useState<AppUser[]>([])
+  const [usersLoading, setUsersLoading] = useState(true)
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
-  const [newUserName, setNewUserName] = useState('')
   const [scannedImages, setScannedImages] = useState<ScannedImage[]>([])
   const [isCameraActive, setIsCameraActive] = useState(false)
-  const [apiKey, setApiKey] = useState(localStorage.getItem('grokApiKey') || '')
   const webcamRef = useRef<Webcam>(null)
   const labelCamRef = useRef<Webcam>(null)
 
+  // Quiz state
   const [quizStep, setQuizStep] = useState(0)
   const [wineColor, setWineColor] = useState('')
   const [priceMin, setPriceMin] = useState('')
@@ -98,10 +76,12 @@ export default function App() {
   const [wineOak, setWineOak] = useState('')
   const [wineTannin, setWineTannin] = useState('')
 
+  // Results state
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [priceFilter, setPriceFilter] = useState<{ min: number; max: number } | null>(null)
 
+  // Add wine state
   const [newWine, setNewWine] = useState<NewWine>({ name: '', producer: '', vintage: '', grapes: '', region: '', country: '', color: '', tasting_notes: '' })
   const [userRatings, setUserRatings] = useState<UserRating[]>([])
   const [ratingUserIndex, setRatingUserIndex] = useState(0)
@@ -109,13 +89,31 @@ export default function App() {
   const [isParsingLabel, setIsParsingLabel] = useState(false)
   const [labelCameraActive, setLabelCameraActive] = useState(false)
 
-  const persistUsers = (updated: AppUser[]) => { setUsers(updated); saveUsers(updated) }
+  // Admin state
+  const [newUserName, setNewUserName] = useState('')
+  const [newUserKey, setNewUserKey] = useState('')
+  const [logoTapCount, setLogoTapCount] = useState(0)
+  const [isAddingUser, setIsAddingUser] = useState(false)
 
-  const addUser = () => {
-    const trimmed = newUserName.trim()
-    if (!trimmed || users.length >= 6) return
-    persistUsers([...users, { id: uuidv4(), name: trimmed, wines: [] }])
-    setNewUserName('')
+  // Load users from Supabase on startup
+  useEffect(() => {
+    loadUsers()
+  }, [])
+
+  const loadUsers = async () => {
+    setUsersLoading(true)
+    const data = await fetchAppUsers()
+    setUsers(data)
+    setUsersLoading(false)
+  }
+
+  // Get the best API key to use — prefer selected users' keys, fall back to master
+  const getApiKey = () => {
+    const selectedUserObjects = users.filter(u => selectedUsers.includes(u.id))
+    for (const user of selectedUserObjects) {
+      if (user.grok_api_key) return user.grok_api_key
+    }
+    return MASTER_API_KEY
   }
 
   const toggleSelectUser = (id: string) => {
@@ -138,13 +136,13 @@ export default function App() {
 
   const scanWineLabel = async () => {
     const imageSrc = labelCamRef.current?.getScreenshot()
-    if (!imageSrc || !apiKey) return
+    if (!imageSrc) return
     setIsParsingLabel(true)
     setLabelCameraActive(false)
     try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getApiKey() },
         body: JSON.stringify({
           model: 'grok-4.3',
           messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: imageSrc, detail: 'high' } }, { type: 'text', text: 'You are a wine expert. Analyze this wine label and extract details. Return ONLY valid JSON:\n{"name":"wine name","producer":"winery","vintage":"year or null","grapes":"grape varieties","region":"region","country":"country","color":"Red or White or Rose or Sparkling or Dessert","tasting_notes":"notes or null"}' }] }],
@@ -199,8 +197,37 @@ export default function App() {
     }
   }
 
+  const handleAddUser = async () => {
+    if (!newUserName.trim()) { alert('Please enter a name'); return }
+    setIsAddingUser(true)
+    const result = await addAppUser(newUserName.trim(), newUserKey.trim() || undefined)
+    if (result) {
+      await loadUsers()
+      setNewUserName('')
+      setNewUserKey('')
+      alert(newUserName + ' added!')
+    } else {
+      alert('Error adding user. Name may already exist.')
+    }
+    setIsAddingUser(false)
+  }
+
+  const handleDeleteUser = async (id: string, name: string) => {
+    if (!confirm('Remove ' + name + '?')) return
+    await deleteAppUser(id)
+    await loadUsers()
+  }
+
+  const handleLogoTap = () => {
+    const newCount = logoTapCount + 1
+    setLogoTapCount(newCount)
+    if (newCount >= 3) {
+      setLogoTapCount(0)
+      setScreen('admin')
+    }
+  }
+
   const callGrok = async () => {
-    if (!apiKey) { alert('Please add your Grok API key in Settings first!'); return }
     if (scannedImages.length === 0) { alert('Please scan at least one page of the wine list first!'); return }
     setIsLoading(true); setRecommendations([]); setScreen('results')
     const selectedUserNamesList = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name)
@@ -211,26 +238,10 @@ export default function App() {
     try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getApiKey() },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier with deep knowledge of wine regions, grapes, producers, and flavor profiles.\n\n' +
-'You are recommending wines ONLY for: ' + selectedUserNames + '\n\n' +
-'CRITICAL RULE: You may ONLY recommend wines that are explicitly visible in the scanned wine list image(s). Do not invent, suggest, or reference any wine not shown on this specific list. If you cannot read a wine clearly, skip it.\n\n' +
-'Here is the taste history for the people you are recommending for:\n' + wineHistory + '\n\n' +
-'When matching wines, pay close attention to:\n' +
-'- Ratings (Amazing = strong match signal, Bad = avoid similar wines)\n' +
-'- Value ratings (Great Value lovers want good QPR, Overrated = price sensitive)\n' +
-'- Grape varieties and regions they have enjoyed\n' +
-'- Tasting notes they have responded to\n\n' +
-'Their preferences for tonight:\n' + preferences + '\n\n' +
-'Instructions:\n' +
-'1. First scan ALL wines visible in the image(s) and extract the full list\n' +
-'2. Score each wine against the taste history and preferences above\n' +
-'3. Return ONLY the top 5 matches from the actual wine list\n' +
-'4. For each recommendation explain exactly WHY it matches their history\n\n' +
-'Return ONLY a valid JSON array, no other text:\n' +
-'[{"wine_name":"exact name from list","producer":"producer","vintage":"year or null","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"specific explanation referencing their past wines and ratings","tasting_notes":"flavor profile body finish","potential_drawbacks":"honest risks or null"}]' }] }],
+          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: 'You are an expert sommelier with deep knowledge of wine regions, grapes, producers, and flavor profiles.\n\n' + 'You are recommending wines ONLY for: ' + selectedUserNames + '\n\n' + 'CRITICAL RULE: You may ONLY recommend wines that are explicitly visible in the scanned wine list image(s). Do not invent, suggest, or reference any wine not shown on this specific list. If you cannot read a wine clearly, skip it.\n\n' + 'Here is the taste history for the people you are recommending for:\n' + wineHistory + '\n\n' + 'When matching wines, pay close attention to:\n' + '- Ratings (Amazing = strong match signal, Bad = avoid similar wines)\n' + '- Value ratings (Great Value lovers want good QPR, Overrated = price sensitive)\n' + '- Grape varieties and regions they have enjoyed\n' + '- Tasting notes they have responded to\n\n' + 'Their preferences for tonight:\n' + preferences + '\n\n' + 'Instructions:\n' + '1. First scan ALL wines visible in the image(s) and extract the full list\n' + '2. Score each wine against the taste history and preferences above\n' + '3. Return ONLY the top 5 matches from the actual wine list\n' + '4. For each recommendation explain exactly WHY it matches their history\n\n' + 'Return ONLY a valid JSON array, no other text:\n' + '[{"wine_name":"exact name from list","producer":"producer","vintage":"year or null","menu_price":65,"retail_price":45,"similarity_score":9.2,"why_it_matches":"specific explanation referencing their past wines and ratings","tasting_notes":"flavor profile body finish","potential_drawbacks":"honest risks or null"}]' }] }],
           max_tokens: 2000
         })
       })
@@ -240,7 +251,7 @@ export default function App() {
       const content = data.choices?.[0]?.message?.content || '[]'
       setRecommendations(JSON.parse(content.replace(/```json|```/g, '').trim()))
     } catch (err) {
-      console.error(err); alert('Something went wrong. Check your API key and try again.'); setScreen('quiz')
+      console.error(err); alert('Something went wrong. Please try again.'); setScreen('quiz')
     } finally { setIsLoading(false) }
   }
 
@@ -264,31 +275,37 @@ export default function App() {
     </button>
   )
 
+  // ── STARTUP ──────────────────────────────────────────────
   if (screen === 'startup') return (
     <div style={s.page}>
       <div style={{ background: '#3C2A1F', padding: '20px', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0 }}>🍷 WineMatch</h1>
+        <h1 onClick={handleLogoTap} style={{ fontSize: '2rem', color: '#FEF3C7', margin: 0, cursor: 'pointer', userSelect: 'none' }}>🍷 WineMatch</h1>
         <p style={{ color: '#FCD34D', margin: '4px 0 0' }}>Your personal AI sommelier</p>
       </div>
       <div style={{ flex: 1, padding: '24px', display: 'flex', flexDirection: 'column' }}>
         <h2 style={{ textAlign: 'center', fontSize: '1.4rem', marginBottom: '8px' }}>Who are we recommending for today?</h2>
         <p style={{ textAlign: 'center', color: '#FCD34D', fontSize: '0.9rem', marginBottom: '24px' }}>Tap names to select</p>
-        {users.length === 0 && <p style={{ textAlign: 'center', color: '#92400E', marginBottom: '16px' }}>No users yet — add yourself below!</p>}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
-          {users.map(u => (
-            <button key={u.id} onClick={() => toggleSelectUser(u.id)}
-              style={{ padding: '20px', borderRadius: '16px', fontSize: '1.1rem', fontWeight: 'bold', border: '2px solid', cursor: 'pointer', background: selectedUsers.includes(u.id) ? '#B45309' : '#2A1F17', borderColor: selectedUsers.includes(u.id) ? '#FCD34D' : '#78350F', color: 'white' }}>
-              👤 {u.name}
-            </button>
-          ))}
-        </div>
-        {users.length < 6 && (
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '24px' }}>
-            <input value={newUserName} onChange={e => setNewUserName(e.target.value)} onKeyDown={e => e.key === 'Enter' && addUser()} placeholder="Add a name..." style={s.input} />
-            <button onClick={addUser} style={{ background: '#B45309', border: 'none', borderRadius: '12px', padding: '12px 20px', color: 'white', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>+ Add</button>
+
+        {usersLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px', color: '#FCD34D' }}>Loading users...</div>
+        ) : users.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>
+            <p style={{ color: '#92400E', marginBottom: '16px' }}>No users yet!</p>
+            <p style={{ color: '#FCD34D', fontSize: '0.9rem' }}>Tap the 🍷 logo 3 times to open Admin and add users.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '24px' }}>
+            {users.map(u => (
+              <button key={u.id} onClick={() => toggleSelectUser(u.id)}
+                style={{ padding: '20px', borderRadius: '16px', fontSize: '1.1rem', fontWeight: 'bold', border: '2px solid', cursor: 'pointer', background: selectedUsers.includes(u.id) ? '#B45309' : '#2A1F17', borderColor: selectedUsers.includes(u.id) ? '#FCD34D' : '#78350F', color: 'white' }}>
+                👤 {u.name}
+              </button>
+            ))}
           </div>
         )}
-        <button onClick={() => { if (users.length > 0 && selectedUsers.length === 0) { alert('Please tap at least one name'); return; } setScreen('home') }}
+
+        <button
+          onClick={() => { if (users.length > 0 && selectedUsers.length === 0) { alert('Please tap at least one name'); return; } setScreen('home') }}
           style={{ ...s.primaryBtn, marginTop: 'auto', padding: '20px', fontSize: '1.2rem' }}>
           Let's Go →
         </button>
@@ -296,6 +313,7 @@ export default function App() {
     </div>
   )
 
+  // ── HOME ─────────────────────────────────────────────────
   if (screen === 'home') {
     const names = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name).join(', ')
     return (
@@ -324,6 +342,54 @@ export default function App() {
     )
   }
 
+  // ── ADMIN ─────────────────────────────────────────────────
+  if (screen === 'admin') return (
+    <div style={s.page}>
+      <div style={s.header}>
+        <button onClick={() => setScreen('startup')} style={s.backBtn}>← Back</button>
+        <h2 style={{ margin: 0 }}>👑 Admin — Manage Users</h2>
+      </div>
+      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+        {/* Add new user */}
+        <div style={s.card}>
+          <h3 style={{ margin: '0 0 16px', color: '#FEF3C7' }}>Add New User</h3>
+          <label style={s.label}>Name</label>
+          <input value={newUserName} onChange={e => setNewUserName(e.target.value)} placeholder="e.g. Sarah" style={{ ...s.input, marginBottom: '12px' }} />
+          <label style={s.label}>Their Grok API Key (optional — leave blank to use master key)</label>
+          <input value={newUserKey} onChange={e => setNewUserKey(e.target.value)} placeholder="xai-... or leave blank" style={{ ...s.input, marginBottom: '16px' }} />
+          <button onClick={handleAddUser} disabled={isAddingUser} style={{ ...s.primaryBtn, opacity: isAddingUser ? 0.6 : 1 }}>
+            {isAddingUser ? 'Adding...' : '+ Add User'}
+          </button>
+        </div>
+
+        {/* User list */}
+        <div>
+          <h3 style={{ color: '#FEF3C7', margin: '0 0 12px' }}>Current Users ({users.length})</h3>
+          {users.map(u => (
+            <div key={u.id} style={{ ...s.card, marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <p style={{ margin: 0, fontWeight: 'bold', color: '#FEF3C7' }}>
+                  {u.name} {u.is_admin ? '👑' : ''}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: '#92400E' }}>
+                  {u.grok_api_key ? '🔑 Has own API key' : '🔑 Using master key'}
+                </p>
+              </div>
+              {!u.is_admin && (
+                <button onClick={() => handleDeleteUser(u.id, u.name)}
+                  style={{ background: '#DC2626', border: 'none', borderRadius: '8px', padding: '8px 12px', color: 'white', cursor: 'pointer', fontSize: '0.85rem' }}>
+                  Remove
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+
+  // ── SCAN ─────────────────────────────────────────────────
   if (screen === 'scan') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -372,6 +438,7 @@ export default function App() {
     </div>
   )
 
+  // ── ADD WINE ──────────────────────────────────────────────
   if (screen === 'addWine') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -408,6 +475,7 @@ export default function App() {
     </div>
   )
 
+  // ── ADD WINE FORM ─────────────────────────────────────────
   if (screen === 'addWineForm') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -459,6 +527,7 @@ export default function App() {
     </div>
   )
 
+  // ── RATE WINE ─────────────────────────────────────────────
   if (screen === 'rateWine') {
     const currentUser = userRatings[ratingUserIndex]
     const isLastUser = ratingUserIndex === userRatings.length - 1
@@ -517,6 +586,7 @@ export default function App() {
     )
   }
 
+  // ── QUIZ ─────────────────────────────────────────────────
   if (screen === 'quiz') {
     const steps = [
       { title: 'What type of wine?', content: (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>{['🔴 Red', '⚪ White', '🌸 Rosé', '🥂 Sparkling', '🍯 Dessert', '🤷 No Preference'].map(opt => optionBtn(opt, opt, wineColor, setWineColor))}</div>) },
@@ -555,6 +625,7 @@ export default function App() {
     )
   }
 
+  // ── RESULTS ───────────────────────────────────────────────
   if (screen === 'results') {
     const filtered = priceFilter ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max) : recommendations
     return (
@@ -619,6 +690,7 @@ export default function App() {
     )
   }
 
+  // ── SETTINGS ─────────────────────────────────────────────
   if (screen === 'settings') return (
     <div style={s.page}>
       <div style={s.header}>
@@ -626,9 +698,9 @@ export default function App() {
         <h2 style={{ margin: 0 }}>Settings</h2>
       </div>
       <div style={{ padding: '24px' }}>
-        <label style={s.label}>Grok API Key</label>
-        <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="xai-..." style={s.input} />
-        <button onClick={() => { localStorage.setItem('grokApiKey', apiKey); alert('Saved!') }} style={{ ...s.primaryBtn, marginTop: '16px' }}>Save API Key</button>
+        <p style={{ color: '#FCD34D', fontSize: '0.9rem' }}>
+          The master Grok API key is built into the app. Individual users can have their own key set in the Admin screen (tap the logo 3 times on the startup screen).
+        </p>
       </div>
     </div>
   )

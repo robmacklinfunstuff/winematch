@@ -5,6 +5,45 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+// ── App Users ─────────────────────────────────────────────
+export async function fetchAppUsers() {
+  const { data, error } = await supabase
+    .from('app_users')
+    .select('id, name, grok_api_key, is_admin')
+    .order('name')
+  if (error) { console.error('Error fetching users:', error); return [] }
+  return data
+}
+
+export async function addAppUser(name: string, grokApiKey?: string) {
+  const { data, error } = await supabase
+    .from('app_users')
+    .insert([{ name, grok_api_key: grokApiKey || null }])
+    .select()
+    .single()
+  if (error) { console.error('Error adding user:', error); return null }
+  return data
+}
+
+export async function deleteAppUser(id: string) {
+  const { error } = await supabase
+    .from('app_users')
+    .delete()
+    .eq('id', id)
+  if (error) { console.error('Error deleting user:', error); return false }
+  return true
+}
+
+export async function updateUserApiKey(id: string, grokApiKey: string) {
+  const { error } = await supabase
+    .from('app_users')
+    .update({ grok_api_key: grokApiKey })
+    .eq('id', id)
+  if (error) { console.error('Error updating API key:', error); return false }
+  return true
+}
+
+// ── Wines & Ratings ───────────────────────────────────────
 export async function saveWineWithRatings(
   wine: {
     name: string
@@ -30,25 +69,17 @@ export async function saveWineWithRatings(
     .select()
     .single()
 
-  if (wineError) {
-    console.error('Error saving wine:', wineError)
-    return { success: false, error: wineError }
-  }
+  if (wineError) { console.error('Error saving wine:', wineError); return { success: false, error: wineError } }
 
   if (ratings.length > 0) {
     const ratingsToInsert = ratings
       .filter(r => r.rating)
       .map(r => ({ ...r, wine_id: wineData.id }))
-
     if (ratingsToInsert.length > 0) {
       const { error: ratingsError } = await supabase
         .from('ratings')
         .insert(ratingsToInsert)
-
-      if (ratingsError) {
-        console.error('Error saving ratings:', ratingsError)
-        return { success: false, error: ratingsError }
-      }
+      if (ratingsError) { console.error('Error saving ratings:', ratingsError); return { success: false, error: ratingsError } }
     }
   }
 
@@ -57,7 +88,6 @@ export async function saveWineWithRatings(
 
 export async function getWinesForUsers(userNames: string[]) {
   if (userNames.length === 0) return []
-
   const { data, error } = await supabase
     .from('ratings')
     .select(`
@@ -79,10 +109,7 @@ export async function getWinesForUsers(userNames: string[]) {
     `)
     .in('user_name', userNames)
 
-  if (error) {
-    console.error('Error fetching wines:', error)
-    return []
-  }
+  if (error) { console.error('Error fetching wines:', error); return [] }
 
   return data.map((row: any) => ({
     user_name: row.user_name,
