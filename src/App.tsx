@@ -106,6 +106,8 @@ async function extractTextWithVision(dataUrl: string): Promise<string> {
   const data = await response.json()
   return data.responses?.[0]?.fullTextAnnotation?.text || ''
 }
+
+export default function App() {
   const [screen, setScreen] = useState<Screen>('startup')
   const [users, setUsers] = useState<AppUser[]>([])
   const [usersLoading, setUsersLoading] = useState(true)
@@ -122,7 +124,7 @@ async function extractTextWithVision(dataUrl: string): Promise<string> {
   const [wineCountry, setWineCountry] = useState('')
   const [wineOak, setWineOak] = useState('')
   const [wineTannin, setWineTannin] = useState('')
-
+  const [wineAdventure, setWineAdventure] = useState('')
   const [recommendations, setRecommendations] = useState<Recommendation[]>([])
   const [worstPick, setWorstPick] = useState<WorstPick | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -324,7 +326,7 @@ async function extractTextWithVision(dataUrl: string): Promise<string> {
       return parts.join('\n')
     }).join('\n\n')
 
-    const preferences = 'Wine color: ' + (wineColor || 'no preference') + ', Price range: ' + (priceMin && priceMax ? '$' + priceMin + '-$' + priceMax : 'no preference') + ', Body: ' + (wineBody || 'no preference') + ', Best value: ' + (bestValue || 'no preference') + ', Country: ' + (wineCountry || 'no preference') + ', Oak: ' + (wineOak || 'no preference') + ', Tannins: ' + (wineTannin || 'no preference')
+    const preferences = 'Wine color: ' + (wineColor || 'no preference') + ', Price range: ' + (priceMin && priceMax ? '$' + priceMin + '-$' + priceMax : 'no preference') + ', Adventurousness: ' + (wineAdventure || 'no preference') + ', Body: ' + (wineBody || 'no preference') + ', Best value: ' + (bestValue || 'no preference') + ', Country: ' + (wineCountry || 'no preference') + ', Oak: ' + (wineOak || 'no preference') + ', Tannins: ' + (wineTannin || 'no preference')
     const wineHistory = allWines.length > 0 ? 'Past wine ratings:\n' + JSON.stringify(allWines) : 'No past wine history — rely on stated preferences.'
 
     try {
@@ -369,7 +371,8 @@ TASK (follow exactly in this order):
 1. Parse the wine list text above and identify every wine with its name, producer, vintage, and price.
 2. Evaluate each wine against the users' taste history and tonight's preferences.
 3. Pick the top 3 best matches AND the single worst match.
-4. Be sassy, fun, and opinionated — but NEVER recommend a wine not in the text above.
+4. Pay close attention to the Adventurousness preference: "familiar" means stick to well-known classic grapes and regions; "far afield" means interesting but approachable varieties; "very unique" means prioritize rare grapes, unusual regions, or unexpected styles — even if less obvious matches.
+5. Be sassy, fun, and opinionated — but NEVER recommend a wine not in the text above.
 
 Return ONLY valid JSON, no other text:
 {
@@ -408,7 +411,7 @@ If no wines are found in the text, return:
     } finally { setIsLoading(false); setOcrStatus('') }
   }
 
-  const resetQuiz = () => { setQuizStep(0); setWineColor(''); setPriceMin(''); setPriceMax(''); setWineBody(''); setBestValue(''); setWineCountry(''); setWineOak(''); setWineTannin('') }
+  const resetQuiz = () => { setQuizStep(0); setWineColor(''); setPriceMin(''); setPriceMax(''); setWineBody(''); setBestValue(''); setWineCountry(''); setWineOak(''); setWineTannin(''); setWineAdventure('') }
 
   const s: Record<string, any> = {
     page: { minHeight: '100vh', background: '#1F1209', color: 'white', display: 'flex', flexDirection: 'column' },
@@ -838,6 +841,7 @@ If no wines are found in the text, return:
   if (screen === 'quiz') {
     const steps = [
       { title: 'What type of wine?', content: (<div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>{['🔴 Red', '⚪ White', '🌸 Rosé', '🥂 Sparkling', '🍯 Dessert', '🤷 No Preference'].map(opt => optionBtn(opt, opt, wineColor, setWineColor))}</div>) },
+      { title: 'Are you feeling adventurous?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['🏠 Something familiar — classic, crowd-pleasing styles I know I like', '🗺️ A bit far afield — something interesting but not too out there', '🌍 Very unique — surprise me with something rare and unexpected'].map(opt => optionBtn(opt, opt, wineAdventure, setWineAdventure))}</div>) },
       { title: 'Price range on the menu?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}><div style={{ display: 'flex', gap: '12px', alignItems: 'flex-end' }}><div style={{ flex: 1 }}><label style={s.label}>Min ($)</label><input type="number" value={priceMin} onChange={e => setPriceMin(e.target.value)} placeholder="0" style={s.input} /></div><span style={{ color: '#FCD34D', paddingBottom: '14px' }}>—</span><div style={{ flex: 1 }}><label style={s.label}>Max ($)</label><input type="number" value={priceMax} onChange={e => setPriceMax(e.target.value)} placeholder="200" style={s.input} /></div></div><button onClick={() => { setPriceMin(''); setPriceMax('') }} style={s.secondaryBtn}>No Price Preference</button></div>) },
       { title: 'How full-bodied?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Light', 'Medium', 'Full', 'No Preference'].map(opt => optionBtn(opt, opt, wineBody, setWineBody))}</div>) },
       { title: 'Prioritize best value?', content: (<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>{['Yes — find me the best deal', 'No — best match only', 'No Preference'].map(opt => optionBtn(opt, opt, bestValue, setBestValue))}</div>) },
