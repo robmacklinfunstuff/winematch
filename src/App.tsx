@@ -92,8 +92,6 @@ export default function App() {
   const [usersLoading, setUsersLoading] = useState(true)
   const [selectedUsers, setSelectedUsers] = useState<string[]>([])
   const [scannedImages, setScannedImages] = useState<ScannedImage[]>([])
-  const [isCameraActive, setIsCameraActive] = useState(false)
-  const webcamRef = useRef<Webcam>(null)
   const labelCamRef = useRef<Webcam>(null)
 
   const [quizStep, setQuizStep] = useState(0)
@@ -126,6 +124,8 @@ export default function App() {
   const [editingProfile, setEditingProfile] = useState<{ id: string; text: string } | null>(null)
   const [isGeneratingSummary, setIsGeneratingSummary] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [showExtracted, setShowExtracted] = useState(false)
+  const [extractedWines, setExtractedWines] = useState<any[]>([])
 
   useEffect(() => { loadUsers() }, [])
 
@@ -146,18 +146,6 @@ export default function App() {
 
   const toggleSelectUser = (id: string) => {
     setSelectedUsers(prev => prev.includes(id) ? prev.filter(u => u !== id) : [...prev, id])
-  }
-
-  // ── Capture with compression ──────────────────────────────
-  const capturePhoto = async () => {
-    const imageSrc = webcamRef.current?.getScreenshot()
-    if (!imageSrc) return
-    const compressed = await compressImage(imageSrc)
-    setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: compressed }])
-    // Release camera stream so flashlight becomes available
-    const stream = webcamRef.current?.video?.srcObject as MediaStream
-    if (stream) stream.getTracks().forEach(track => track.stop())
-    setIsCameraActive(false)
   }
 
   const startAddWine = () => {
@@ -394,7 +382,7 @@ If no wines are readable, return:
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getApiKey() },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [...scannedImages.map(img => ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: promptText }] }],
+          messages: [{ role: 'user', content: [...scannedImages.map(img => img.dataUrl.startsWith('data:application/pdf') ? ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: img.dataUrl.split(',')[1] } }) : ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: promptText }] }],
           max_tokens: 2500
         })
       })
@@ -443,9 +431,9 @@ If no wines are readable, return:
 
         {[
           { icon: '👤', title: 'Select Who\'s Drinking', text: 'At startup, tap names to choose who\'s at the table tonight. Grok will combine everyone\'s taste history to make recommendations.' },
-          { icon: '📷', title: 'Scan the Wine List', text: 'Tap "Select a Wine" then open the camera. Take clear photos of each page of the wine list. Add as many pages as needed.' },
+          { icon: '📷', title: 'Scan the Wine List', text: 'Tap "Select a Wine" then choose "Take a Photo" to use your camera (your flashlight will work!), or "Upload File" to use a saved photo or PDF from your device. Add as many pages as needed.' },
           { icon: '🎯', title: 'Answer the Quiz', text: 'After scanning, answer a few quick questions about what you\'re in the mood for tonight — color, price, body, country, etc. Skip any you don\'t care about.' },
-          { icon: '🍾', title: 'Get Recommendations', text: 'Grok picks the top 5 wines from the actual list that match your taste history and tonight\'s preferences — plus one wine to avoid! Filter by price if you want.' },
+          { icon: '🍾', title: 'Get Recommendations', text: 'Grok picks the top 3 wines from the actual list that match your taste history and tonight\'s preferences — plus one wine to avoid! Tap "🔍 What Grok read" to see exactly which wines it found on the menu. Filter by price if you want.' },
           { icon: '➕', title: 'Add Wines You\'ve Tried', text: 'Tap "Add a Wine" to save wines you\'ve had. Scan the label or enter by hand. Rate it Amazing/Good/Fine/Bad. The more you add, the smarter Grok gets.' },
           { icon: '👑', title: 'Admin (Tap Logo 3x)', text: 'On the startup screen, tap the 🍷 logo three times to open Admin. Add or remove users and edit taste profiles.' },
         ].map(item => (
@@ -613,53 +601,82 @@ If no wines are readable, return:
   )
 
   // ── SCAN ─────────────────────────────────────────────────
-  if (screen === 'scan') return (
-    <div style={s.page}>
-      <div style={s.header}>
-        <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
-        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Scan Wine List</h2>
-      </div>
-      <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {!isCameraActive ? (
-          <button onClick={() => setIsCameraActive(true)}
-            style={{ width: '100%', background: '#B45309', border: 'none', borderRadius: '24px', padding: '48px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '3rem' }}>📷</span>Open Camera
-          </button>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ borderRadius: '16px', overflow: 'hidden', background: 'black' }}>
-              <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" videoConstraints={{ facingMode: 'environment' }} style={{ width: '100%' }} />
-            </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={capturePhoto} style={{ flex: 1, background: 'white', color: 'black', border: 'none', borderRadius: '12px', padding: '16px', fontSize: '1rem', fontWeight: 'bold', cursor: 'pointer' }}>📸 Capture Page</button>
-              <button onClick={() => setIsCameraActive(false)} style={{ flex: 1, background: '#2A1F17', color: 'white', border: 'none', borderRadius: '12px', padding: '16px', cursor: 'pointer' }}>Close</button>
-            </div>
-          </div>
-        )}
-        {scannedImages.length > 0 && (
-          <div>
-            <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Captured pages ({scannedImages.length})</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
-              {scannedImages.map(img => (
-                <div key={img.id} style={{ position: 'relative' }}>
-                  <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
-                  <button onClick={() => setScannedImages(prev => prev.filter(i => i.id !== img.id))}
-                    style={{ position: 'absolute', top: '4px', right: '4px', background: '#DC2626', border: 'none', borderRadius: '50%', width: '20px', height: '20px', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
-                </div>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button onClick={() => setIsCameraActive(true)} style={s.secondaryBtn}>+ Add Page</button>
+  if (screen === 'scan') {
+    const handleFileInput = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files || [])
+      for (const file of files) {
+        if (file.type === 'application/pdf') {
+          // Send PDF as base64 directly
+          const reader = new FileReader()
+          reader.onload = () => {
+            const base64 = reader.result as string
+            setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: base64 }])
+          }
+          reader.readAsDataURL(file)
+        } else {
+          // Image — compress before storing
+          const reader = new FileReader()
+          reader.onload = async () => {
+            const compressed = await compressImage(reader.result as string)
+            setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: compressed }])
+          }
+          reader.readAsDataURL(file)
+        }
+      }
+      e.target.value = '' // reset so same file can be added again
+    }
+
+    return (
+      <div style={s.page}>
+        <div style={s.header}>
+          <button onClick={() => setScreen('home')} style={s.backBtn}>← Back</button>
+          <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Scan Wine List</h2>
+        </div>
+        <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+          {/* Take photo with native camera */}
+          <label style={{ width: '100%', background: '#B45309', border: 'none', borderRadius: '24px', padding: '36px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', boxSizing: 'border-box' as const }}>
+            <span style={{ fontSize: '3rem' }}>📷</span>
+            Take a Photo
+            <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: '#FDE68A' }}>Opens your camera — flashlight works!</span>
+            <input type="file" accept="image/*" capture="environment" onChange={handleFileInput} style={{ display: 'none' }} />
+          </label>
+
+          {/* Upload image or PDF */}
+          <label style={{ width: '100%', background: '#2A1F17', border: '2px solid #78350F', borderRadius: '24px', padding: '36px 24px', color: 'white', fontSize: '1.3rem', fontWeight: 'bold', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px', boxSizing: 'border-box' as const }}>
+            <span style={{ fontSize: '3rem' }}>📄</span>
+            Upload File
+            <span style={{ fontSize: '0.85rem', fontWeight: 'normal', color: '#FCD34D' }}>Photo or PDF from your device</span>
+            <input type="file" accept="image/*,application/pdf" multiple onChange={handleFileInput} style={{ display: 'none' }} />
+          </label>
+
+          {/* Captured pages */}
+          {scannedImages.length > 0 && (
+            <div>
+              <p style={{ color: '#FCD34D', marginBottom: '12px' }}>Added pages ({scannedImages.length})</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
+                {scannedImages.map(img => (
+                  <div key={img.id} style={{ position: 'relative' }}>
+                    {img.dataUrl.startsWith('data:application/pdf') ? (
+                      <div style={{ background: '#2A1F17', borderRadius: '8px', padding: '12px', textAlign: 'center', fontSize: '0.75rem', color: '#FCD34D' }}>📄 PDF</div>
+                    ) : (
+                      <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
+                    )}
+                    <button onClick={() => setScannedImages(prev => prev.filter(i => i.id !== img.id))}
+                      style={{ position: 'absolute', top: '4px', right: '4px', background: '#DC2626', border: 'none', borderRadius: '50%', width: '20px', height: '20px', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
+                  </div>
+                ))}
+              </div>
               <button onClick={() => { setQuizStep(0); setScreen('quiz') }}
-                style={{ flex: 1, background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '16px', fontWeight: 'bold', cursor: 'pointer' }}>
+                style={{ width: '100%', background: '#B45309', border: 'none', color: 'white', borderRadius: '16px', padding: '18px', fontWeight: 'bold', cursor: 'pointer', fontSize: '1.1rem' }}>
                 Recommend Now →
               </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   // ── ADD WINE ──────────────────────────────────────────────
   if (screen === 'addWine') return (
@@ -849,9 +866,6 @@ If no wines are readable, return:
   }
 
   // ── RESULTS ───────────────────────────────────────────────
-  const [showExtracted, setShowExtracted] = useState(false)
-  const [extractedWines, setExtractedWines] = useState<any[]>([])
-
   if (screen === 'results') {
     const filtered = priceFilter ? recommendations.filter(r => (r.menu_price || 0) >= priceFilter.min && (r.menu_price || 0) <= priceFilter.max) : recommendations
     return (
