@@ -70,7 +70,7 @@ const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
 const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 // ── Image compression helper ──────────────────────────────
-function compressImage(dataUrl: string, maxWidth = 800, quality = 0.5): Promise<string> {
+function compressImage(dataUrl: string, maxWidth = 600, quality = 0.4): Promise<string> {
   return new Promise(resolve => {
     const img = new Image()
     img.onload = () => {
@@ -319,7 +319,7 @@ export default function App() {
     const promptText = GROK_PERSONALITY + '\n\n' +
       'You are recommending wines for: ' + selectedUserNames + '\n\n' +
       'USER PROFILES:\n' + userContext + '\n\n' +
-      'CRITICAL RULE: You may ONLY recommend wines explicitly visible in the scanned wine list image(s). Do not invent or reference any wine not shown. If you cannot read a wine clearly, skip it.\n\n' +
+      'CRITICAL RULE: You may ONLY recommend wines explicitly visible in the scanned wine list image(s). Do not invent or reference any wine not shown. If you cannot read a wine clearly, skip it.Only recommend wines you can read with high confidence. If you are uncertain about any detail, omit that wine entirely rather than guessing.\n\n' +
       wineHistory + '\n\n' +
       'When matching wines, pay close attention to:\n' +
       '- Ratings (Amazing = strong match signal, Bad = avoid similar wines)\n' +
