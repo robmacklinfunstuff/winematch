@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser, updateUserProfiles, generateAndSaveTasteSummary } from './supabase'
 
 const MASTER_API_KEY = import.meta.env.VITE_GROK_API_KEY || ''
+const VISION_API_KEY = import.meta.env.VITE_GOOGLE_VISION_KEY || ''
 
 // ── Personality — change this to adjust Grok's tone ──────
 const GROK_PERSONALITY = `You have a fun, sassy, opinionated personality. You are confident in your recommendations, use light humor, and are not afraid to be dramatic about bad wine choices. Think knowledgeable best friend at a restaurant, not stuffy sommelier. Keep it fun but always back up your opinions with real wine knowledge. You never reccommend a wine not on the wine list.`
@@ -86,7 +87,25 @@ function compressImage(dataUrl: string, maxWidth = 600, quality = 0.4): Promise<
   })
 }
 
-export default function App() {
+// ── Google Vision OCR ─────────────────────────────────────
+async function extractTextWithVision(dataUrl: string): Promise<string> {
+  const base64 = dataUrl.split(',')[1]
+  const response = await fetch(
+    `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [{
+          image: { content: base64 },
+          features: [{ type: 'DOCUMENT_TEXT_DETECTION', maxResults: 1 }]
+        }]
+      })
+    }
+  )
+  const data = await response.json()
+  return data.responses?.[0]?.fullTextAnnotation?.text || ''
+}
   const [screen, setScreen] = useState<Screen>('startup')
   const [users, setUsers] = useState<AppUser[]>([])
   const [usersLoading, setUsersLoading] = useState(true)
@@ -126,6 +145,7 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false)
   const [showExtracted, setShowExtracted] = useState(false)
   const [extractedWines, setExtractedWines] = useState<any[]>([])
+  const [ocrStatus, setOcrStatus] = useState('')
 
   useEffect(() => { loadUsers() }, [])
 
@@ -290,7 +310,7 @@ export default function App() {
 
   const callGrok = async () => {
     if (scannedImages.length === 0) { alert('Please scan at least one page of the wine list first!'); return }
-    setIsLoading(true); setRecommendations([]); setWorstPick(null); setScreen('results')
+    setIsLoading(true); setRecommendations([]); setWorstPick(null); setOcrStatus(''); setScreen('results')
 
     const selectedUserNamesList = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name)
     const selectedUserNames = selectedUserNamesList.join(', ')
@@ -307,12 +327,31 @@ export default function App() {
     const preferences = 'Wine color: ' + (wineColor || 'no preference') + ', Price range: ' + (priceMin && priceMax ? '$' + priceMin + '-$' + priceMax : 'no preference') + ', Body: ' + (wineBody || 'no preference') + ', Best value: ' + (bestValue || 'no preference') + ', Country: ' + (wineCountry || 'no preference') + ', Oak: ' + (wineOak || 'no preference') + ', Tannins: ' + (wineTannin || 'no preference')
     const wineHistory = allWines.length > 0 ? 'Past wine ratings:\n' + JSON.stringify(allWines) : 'No past wine history — rely on stated preferences.'
 
-    const promptText = GROK_PERSONALITY + '\n\n' +
-  `CRITICAL RULE — YOU MUST OBEY THIS OR YOU FAIL:
-You are ONLY allowed to recommend or mention wines that are EXPLICITLY VISIBLE and clearly readable in the attached image(s).
-If a wine name, producer, vintage, or price is blurry, cut off, or you are not 100% confident you read it correctly — SKIP IT completely.
-DO NOT invent, guess, or hallucinate any wine that is not clearly shown.
-If you cannot confidently read any wines, return empty recommendations and say so.
+    try {
+      // ── Step 1: Google Vision OCR on all images ──────────
+      setOcrStatus('Reading wine list with Google Vision...')
+      const ocrTexts: string[] = []
+      for (let i = 0; i < scannedImages.length; i++) {
+        setOcrStatus(`Reading page ${i + 1} of ${scannedImages.length}...`)
+        const text = await extractTextWithVision(scannedImages[i].dataUrl)
+        if (text) ocrTexts.push(text)
+      }
+      const fullMenuText = ocrTexts.join('\n\n--- NEXT PAGE ---\n\n')
+
+      if (!fullMenuText.trim()) {
+        alert('Could not read any text from the images. Please try clearer photos.')
+        setScreen('quiz')
+        return
+      }
+
+      setOcrStatus('Asking your sommelier for recommendations...')
+
+      // ── Step 2: Send OCR text to Grok for recommendations ─
+      const promptText = GROK_PERSONALITY + '\n\n' +
+`CRITICAL RULE — YOU MUST OBEY THIS OR YOU FAIL:
+You are ONLY allowed to recommend wines that appear in the wine list text below.
+DO NOT invent, guess, or hallucinate any wine not present in this text.
+If a wine is unclear or incomplete in the text, skip it.
 
 You are recommending wines for: ${selectedUserNames}
 
@@ -323,81 +362,50 @@ ${wineHistory}
 
 Tonight's preferences: ${preferences}
 
+WINE LIST TEXT (extracted by OCR — this is the ONLY source of wines you may recommend):
+${fullMenuText}
+
 TASK (follow exactly in this order):
+1. Parse the wine list text above and identify every wine with its name, producer, vintage, and price.
+2. Evaluate each wine against the users' taste history and tonight's preferences.
+3. Pick the top 3 best matches AND the single worst match.
+4. Be sassy, fun, and opinionated — but NEVER recommend a wine not in the text above.
 
-1. FIRST, carefully examine ALL attached images.
-   Extract EVERY wine that is clearly readable. Create an internal list with:
-   - exact name
-   - producer (if visible)
-   - vintage (if visible)
-   - menu_price (if visible)
-
-2. ONLY AFTER you have the complete extracted list, evaluate which ones best match the users' taste, ratings, value preference, and tonight's preferences.
-
-3. From that extracted list only, pick the top 3 best matches.
-
-Be sassy, fun, and opinionated in your explanations — but NEVER make up a wine.
-
-Return ONLY valid JSON. No other text, no explanations outside the JSON:
-
+Return ONLY valid JSON, no other text:
 {
   "extracted_wines": [
-    {
-      "wine_name": "exact name as seen",
-      "producer": "producer or null",
-      "vintage": "year or null",
-      "menu_price": number or null
-    }
+    {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number or null}
   ],
   "recommendations": [
-    {
-      "wine_name": "exact name",
-      "producer": "producer or null",
-      "vintage": "year or null",
-      "menu_price": number,
-      "retail_price": number or null,
-      "similarity_score": number,
-      "why_it_matches": "short, fun, sassy explanation referencing their past wines",
-      "similar_to": "name of one wine from their history or null",
-      "tasting_notes": "brief flavor profile",
-      "potential_drawbacks": "any honest risks or null"
-    }
+    {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number, "retail_price": number or null, "similarity_score": number, "why_it_matches": "fun sassy explanation", "similar_to": "wine from their history or null", "tasting_notes": "brief flavor profile", "potential_drawbacks": "honest risks or null"}
   ],
-  "worst_pick": {
-    "wine_name": "exact name or null",
-    "why_its_bad": "fun sassy explanation why this is terrible for them or null"
-  }
+  "worst_pick": {"wine_name": "exact name or null", "why_its_bad": "fun sassy explanation or null"}
 }
 
-If no wines are readable, return:
-{
-  "extracted_wines": [],
-  "recommendations": [],
-  "worst_pick": null
-}`
+If no wines are found in the text, return:
+{"extracted_wines": [], "recommendations": [], "worst_pick": null}`
 
-    try {
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + getApiKey() },
         body: JSON.stringify({
           model: 'grok-4.3',
-          messages: [{ role: 'user', content: [...scannedImages.map(img => img.dataUrl.startsWith('data:application/pdf') ? ({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: img.dataUrl.split(',')[1] } }) : ({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })), { type: 'text', text: promptText }] }],
+          messages: [{ role: 'user', content: promptText }],
           max_tokens: 2500
         })
       })
+
       const data = await response.json()
       console.log('Grok response:', data)
       if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
       const content = data.choices?.[0]?.message?.content || '{}'
       const parsed = JSON.parse(content.replace(/```json|```/g, '').trim())
       setExtractedWines(parsed.extracted_wines || [])
-      console.log('Extracted wines from menu:', parsed.extracted_wines)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
     } catch (err) {
       console.error(err); alert('Something went wrong. Please try again.'); setScreen('quiz')
-    } finally { setIsLoading(false) }
+    } finally { setIsLoading(false); setOcrStatus('') }
   }
 
   const resetQuiz = () => { setQuizStep(0); setWineColor(''); setPriceMin(''); setPriceMax(''); setWineBody(''); setBestValue(''); setWineCountry(''); setWineOak(''); setWineTannin('') }
@@ -433,7 +441,7 @@ If no wines are readable, return:
           { icon: '👤', title: 'Select Who\'s Drinking', text: 'At startup, tap names to choose who\'s at the table tonight. Grok will combine everyone\'s taste history to make recommendations.' },
           { icon: '📷', title: 'Scan the Wine List', text: 'Tap "Select a Wine" then choose "Take a Photo" to use your camera (your flashlight will work!), or "Upload File" to use a saved photo or PDF from your device. Add as many pages as needed.' },
           { icon: '🎯', title: 'Answer the Quiz', text: 'After scanning, answer a few quick questions about what you\'re in the mood for tonight — color, price, body, country, etc. Skip any you don\'t care about.' },
-          { icon: '🍾', title: 'Get Recommendations', text: 'Grok picks the top 3 wines from the actual list that match your taste history and tonight\'s preferences — plus one wine to avoid! Tap "🔍 What Grok read" to see exactly which wines it found on the menu. Filter by price if you want.' },
+          { icon: '🍾', title: 'Get Recommendations', text: 'Google Vision reads every wine on the list, then Grok picks the top 3 matches for your taste — plus one wine to avoid! Tap "🔍 What Vision read" to see exactly which wines were found. Filter by price if you want.' },
           { icon: '➕', title: 'Add Wines You\'ve Tried', text: 'Tap "Add a Wine" to save wines you\'ve had. Scan the label or enter by hand. Rate it Amazing/Good/Fine/Bad. The more you add, the smarter Grok gets.' },
           { icon: '👑', title: 'Admin (Tap Logo 3x)', text: 'On the startup screen, tap the 🍷 logo three times to open Admin. Add or remove users and edit taste profiles.' },
         ].map(item => (
@@ -878,8 +886,8 @@ If no wines are readable, return:
           {isLoading ? (
             <div style={{ textAlign: 'center', padding: '60px 24px' }}>
               <div style={{ fontSize: '3rem', marginBottom: '16px' }}>🍷</div>
-              <p style={{ color: '#FCD34D', fontSize: '1.2rem' }}>Your sommelier is on it...</p>
-              <p style={{ color: '#92400E', fontSize: '0.9rem' }}>This takes about 15 seconds</p>
+              <p style={{ color: '#FCD34D', fontSize: '1.2rem' }}>{ocrStatus || 'Your sommelier is on it...'}</p>
+              <p style={{ color: '#92400E', fontSize: '0.9rem' }}>This takes about 15-20 seconds</p>
             </div>
           ) : (
             
@@ -889,13 +897,13 @@ If no wines are readable, return:
                 <button
                   onClick={() => setShowExtracted(p => !p)}
                   style={{ width: '100%', background: 'none', border: 'none', padding: '12px 16px', color: '#A0A0FF', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-                  <span>🔍 What Grok read from the menu ({extractedWines.length} wines)</span>
+                  <span>🔍 What Vision read from the menu ({extractedWines.length} wines)</span>
                   <span>{showExtracted ? '▲' : '▼'}</span>
                 </button>
                 {showExtracted && (
                   <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     {extractedWines.length === 0 ? (
-                      <p style={{ color: '#FF6B6B', fontSize: '0.85rem', margin: 0 }}>⚠️ Grok could not read any wines from the image. Try a clearer photo.</p>
+                      <p style={{ color: '#FF6B6B', fontSize: '0.85rem', margin: 0 }}>⚠️ Vision could not read any wines from the image. Try a clearer photo.</p>
                     ) : (
                       extractedWines.map((w, i) => (
                         <div key={i} style={{ background: '#2A2A4A', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', color: '#C0C0FF' }}>
