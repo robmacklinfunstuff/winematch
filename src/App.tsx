@@ -403,15 +403,20 @@ If no wines are found in the text, return:
         body: JSON.stringify({
           model: 'grok-4.3',
           messages: [{ role: 'user', content: promptText }],
-          max_tokens: 2500
+          max_tokens: 8000
         })
       })
 
       const data = await response.json()
       console.log('Grok response:', data)
       if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
-      const content = data.choices?.[0]?.message?.content || '{}'
-      const parsed = JSON.parse(content.replace(/```json|```/g, '').trim())
+      const finishReason = data.choices?.[0]?.finish_reason
+      if (finishReason === 'length') {
+        alert('The wine list is too long — the response was cut off. Try scanning fewer pages at once.'); setScreen('quiz'); return
+      }
+      const rawContent = data.choices?.[0]?.message?.content ?? ''
+      const content = rawContent.replace(/```json|```/g, '').trim() || '{}'
+      const parsed = JSON.parse(content)
       setExtractedWines(parsed.extracted_wines || [])
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
