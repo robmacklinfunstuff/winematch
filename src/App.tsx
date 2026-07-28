@@ -383,12 +383,14 @@ TASK (follow exactly in this order):
 4. Pay close attention to the Adventurousness preference: "familiar" means stick to well-known classic grapes and regions; "far afield" means interesting but approachable varieties; "very unique" means prioritize rare grapes, unusual regions, or unexpected styles — even if less obvious matches.
 5. Be sassy, fun, and opinionated — but NEVER recommend a wine not in the text above.
 
+IMPORTANT: Every string value in the JSON must be 20 words or fewer. Do not exceed this limit.
+
 Return ONLY valid JSON, no other text:
 {
   "recommendations": [
-    {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number, "retail_price": number or null, "similarity_score": number, "why_it_matches": "fun sassy explanation", "similar_to": "wine from their history or null", "tasting_notes": "brief flavor profile", "potential_drawbacks": "honest risks or null"}
+    {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number, "retail_price": number or null, "similarity_score": number, "why_it_matches": "one punchy sentence, max 20 words", "similar_to": "wine from their history or null", "tasting_notes": "3-5 word flavor profile", "potential_drawbacks": "one phrase or null"}
   ],
-  "worst_pick": {"wine_name": "exact name or null", "why_its_bad": "fun sassy explanation or null"}
+  "worst_pick": {"wine_name": "exact name or null", "why_its_bad": "one sentence, max 20 words or null"}
 }
 
 If no wines are found in the text, return:
@@ -421,7 +423,7 @@ If no wines are found in the text, return:
       const content = rawContent.replace(/```json|```/g, '').trim() || '{}'
       let parsed: any
       try { parsed = JSON.parse(content) }
-      catch { alert('Could not parse Grok JSON:\n' + content.slice(0, 300)); setScreen('quiz'); return }
+      catch { alert('Could not parse Grok JSON (finish_reason=' + finishReason + '):\n' + content.slice(0, 400)); setScreen('quiz'); return }
       setOcrText(fullMenuText)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
