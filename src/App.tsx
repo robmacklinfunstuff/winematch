@@ -155,7 +155,7 @@ export default function App() {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState<string | null>(null)
   const [showHelp, setShowHelp] = useState(false)
   const [showExtracted, setShowExtracted] = useState(false)
-  const [extractedWines, setExtractedWines] = useState<any[]>([])
+  const [ocrText, setOcrText] = useState('')
   const [ocrStatus, setOcrStatus] = useState('')
 
   useEffect(() => { loadUsers() }, [])
@@ -385,9 +385,6 @@ TASK (follow exactly in this order):
 
 Return ONLY valid JSON, no other text:
 {
-  "extracted_wines": [
-    {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number or null}
-  ],
   "recommendations": [
     {"wine_name": "exact name", "producer": "producer or null", "vintage": "year or null", "menu_price": number, "retail_price": number or null, "similarity_score": number, "why_it_matches": "fun sassy explanation", "similar_to": "wine from their history or null", "tasting_notes": "brief flavor profile", "potential_drawbacks": "honest risks or null"}
   ],
@@ -395,7 +392,7 @@ Return ONLY valid JSON, no other text:
 }
 
 If no wines are found in the text, return:
-{"extracted_wines": [], "recommendations": [], "worst_pick": null}`
+{"recommendations": [], "worst_pick": null}`
 
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
@@ -417,7 +414,7 @@ If no wines are found in the text, return:
       const rawContent = data.choices?.[0]?.message?.content ?? ''
       const content = rawContent.replace(/```json|```/g, '').trim() || '{}'
       const parsed = JSON.parse(content)
-      setExtractedWines(parsed.extracted_wines || [])
+      setOcrText(fullMenuText)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
     } catch (err: any) {
@@ -918,22 +915,15 @@ If no wines are found in the text, return:
                 <button
                   onClick={() => setShowExtracted(p => !p)}
                   style={{ width: '100%', background: 'none', border: 'none', padding: '12px 16px', color: '#A0A0FF', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem' }}>
-                  <span>🔍 What Vision read from the menu ({extractedWines.length} wines)</span>
+                  <span>🔍 What Vision read from the menu</span>
                   <span>{showExtracted ? '▲' : '▼'}</span>
                 </button>
                 {showExtracted && (
-                  <div style={{ padding: '0 16px 16px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {extractedWines.length === 0 ? (
-                      <p style={{ color: '#FF6B6B', fontSize: '0.85rem', margin: 0 }}>⚠️ Vision could not read any wines from the image. Try a clearer photo.</p>
+                  <div style={{ padding: '0 16px 16px' }}>
+                    {ocrText ? (
+                      <pre style={{ color: '#C0C0FF', fontSize: '0.75rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0 }}>{ocrText}</pre>
                     ) : (
-                      extractedWines.map((w, i) => (
-                        <div key={i} style={{ background: '#2A2A4A', borderRadius: '8px', padding: '8px 12px', fontSize: '0.8rem', color: '#C0C0FF' }}>
-                          <strong>{w.wine_name}</strong>
-                          {w.producer ? ' — ' + w.producer : ''}
-                          {w.vintage ? ' ' + w.vintage : ''}
-                          {w.menu_price ? <span style={{ color: '#A0FFA0', marginLeft: '8px' }}>${w.menu_price}</span> : ''}
-                        </div>
-                      ))
+                      <p style={{ color: '#FF6B6B', fontSize: '0.85rem', margin: 0 }}>⚠️ Vision could not read any text from the image. Try a clearer photo.</p>
                     )}
                   </div>
                 )}
