@@ -2,6 +2,12 @@ import { useState, useRef, useEffect } from 'react'
 import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
 import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser, updateUserProfiles, generateAndSaveTasteSummary } from './supabase'
+import * as pdfjsLib from 'pdfjs-dist'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString()
 
 const MASTER_API_KEY = import.meta.env.VITE_GROK_API_KEY || ''
 const VISION_API_KEY = import.meta.env.VITE_GOOGLE_VISION_KEY || ''
@@ -620,13 +626,20 @@ If no wines are found in the text, return:
       const files = Array.from(e.target.files || [])
       for (const file of files) {
         if (file.type === 'application/pdf') {
-          // Send PDF as base64 directly
-          const reader = new FileReader()
-          reader.onload = () => {
-            const base64 = reader.result as string
-            setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: base64 }])
+          // Render each PDF page to a PNG image so Vision can read it
+          const arrayBuffer = await file.arrayBuffer()
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum)
+            const viewport = page.getViewport({ scale: 2 })
+            const canvas = document.createElement('canvas')
+            canvas.width = viewport.width
+            canvas.height = viewport.height
+            await page.render({ canvasContext: canvas.getContext('2d')!, viewport, canvas }).promise
+            const dataUrl = canvas.toDataURL('image/png')
+            const compressed = await compressImage(dataUrl)
+            setScannedImages(prev => [...prev, { id: uuidv4(), dataUrl: compressed }])
           }
-          reader.readAsDataURL(file)
         } else {
           // Image — compress before storing
           const reader = new FileReader()
@@ -671,11 +684,7 @@ If no wines are found in the text, return:
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '20px' }}>
                 {scannedImages.map(img => (
                   <div key={img.id} style={{ position: 'relative' }}>
-                    {img.dataUrl.startsWith('data:application/pdf') ? (
-                      <div style={{ background: '#2A1F17', borderRadius: '8px', padding: '12px', textAlign: 'center', fontSize: '0.75rem', color: '#FCD34D' }}>📄 PDF</div>
-                    ) : (
-                      <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
-                    )}
+                    <img src={img.dataUrl} style={{ width: '100%', borderRadius: '8px' }} />
                     <button onClick={() => setScannedImages(prev => prev.filter(i => i.id !== img.id))}
                       style={{ position: 'absolute', top: '4px', right: '4px', background: '#DC2626', border: 'none', borderRadius: '50%', width: '20px', height: '20px', color: 'white', cursor: 'pointer', fontSize: '0.7rem' }}>✕</button>
                   </div>
