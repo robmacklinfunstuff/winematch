@@ -404,7 +404,13 @@ If no wines are found in the text, return:
         })
       })
 
-      const data = await response.json()
+      const responseText = await response.text()
+      if (!responseText.trim()) {
+        alert('Grok returned an empty response (HTTP ' + response.status + '). Check your API key or try again.'); setScreen('quiz'); return
+      }
+      let data: any
+      try { data = JSON.parse(responseText) }
+      catch { alert('Grok returned non-JSON (HTTP ' + response.status + '):\n' + responseText.slice(0, 300)); setScreen('quiz'); return }
       console.log('Grok response:', data)
       if (data.error) { alert('Grok API error: ' + data.error.message); setScreen('quiz'); return }
       const finishReason = data.choices?.[0]?.finish_reason
@@ -413,7 +419,9 @@ If no wines are found in the text, return:
       }
       const rawContent = data.choices?.[0]?.message?.content ?? ''
       const content = rawContent.replace(/```json|```/g, '').trim() || '{}'
-      const parsed = JSON.parse(content)
+      let parsed: any
+      try { parsed = JSON.parse(content) }
+      catch { alert('Could not parse Grok JSON:\n' + content.slice(0, 300)); setScreen('quiz'); return }
       setOcrText(fullMenuText)
       setRecommendations(parsed.recommendations || [])
       setWorstPick(parsed.worst_pick || null)
