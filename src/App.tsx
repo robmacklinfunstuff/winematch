@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import Webcam from 'react-webcam'
 import { v4 as uuidv4 } from 'uuid'
-import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser, updateUserProfiles, generateAndSaveTasteSummary } from './supabase'
+import { saveWineWithRatings, getWinesForUsers, fetchAppUsers, addAppUser, deleteAppUser, updateUserProfiles, generateAndSaveTasteSummary, migrateTextRatingsToNumeric } from './supabase'
 import * as pdfjsLib from 'pdfjs-dist'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -73,7 +73,7 @@ type Screen = 'startup' | 'home' | 'scan' | 'quiz' | 'results' | 'addWine' | 'ad
 
 const COUNTRIES = ['USA', 'France', 'Italy', 'Spain', 'Australia/New Zealand', 'South America', 'Germany/Austria', 'Other']
 const COLORS = ['Red', 'White', 'Rosé', 'Sparkling', 'Dessert']
-const RATINGS = ['Amazing', 'Good', 'Fine', 'Bad']
+const RATINGS = [1, 2, 3, 4, 5]
 const VALUE_RATINGS = ['Great Value', 'Fairly Priced', 'Overrated']
 
 // ── Image compression helper ──────────────────────────────
@@ -146,6 +146,8 @@ export default function App() {
   const [isParsingLabel, setIsParsingLabel] = useState(false)
   const [labelCameraActive, setLabelCameraActive] = useState(false)
 
+  const grokCallInFlight = useRef(false)
+
   const [newUserName, setNewUserName] = useState('')
   const [newUserKey, setNewUserKey] = useState('')
   const [newUserProfile, setNewUserProfile] = useState('')
@@ -158,7 +160,7 @@ export default function App() {
   const [ocrText, setOcrText] = useState('')
   const [ocrStatus, setOcrStatus] = useState('')
 
-  useEffect(() => { loadUsers() }, [])
+  useEffect(() => { loadUsers(); migrateTextRatingsToNumeric() }, [])
 
   const loadUsers = async () => {
     setUsersLoading(true)
@@ -285,7 +287,7 @@ export default function App() {
     setIsGeneratingSummary(user.id)
     try {
       const allWines = await getWinesForUsers([user.name])
-      if (allWines.length === 0) { alert('No wine history yet for ' + user.name + '. Add some wines first!'); return }
+      if (allWines.length === 0) { alert('No wine history yet for ' + user.name + '. Add some wines first!'); setIsGeneratingSummary(null); return }
       const response = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + MASTER_API_KEY },
@@ -320,7 +322,9 @@ export default function App() {
   }
 
   const callGrok = async () => {
+    if (grokCallInFlight.current) return
     if (scannedImages.length === 0) { alert('Please scan at least one page of the wine list first!'); return }
+    grokCallInFlight.current = true
     setIsLoading(true); setRecommendations([]); setWorstPick(null); setOcrStatus(''); setScreen('results')
 
     const selectedUserNamesList = users.filter(u => selectedUsers.includes(u.id)).map(u => u.name)
@@ -429,7 +433,7 @@ If no wines are found in the text, return:
       setWorstPick(parsed.worst_pick || null)
     } catch (err: any) {
       alert('Error: ' + (err?.message || String(err))); setScreen('quiz')
-    } finally { setIsLoading(false); setOcrStatus('') }
+    } finally { setIsLoading(false); setOcrStatus(''); grokCallInFlight.current = false }
   }
 
   const resetQuiz = () => { setQuizStep(0); setWineColor(''); setPriceMin(''); setPriceMax(''); setWineBody(''); setBestValue(''); setWineCountry(''); setWineOak(''); setWineTannin(''); setWineAdventure('') }
@@ -466,7 +470,7 @@ If no wines are found in the text, return:
           { icon: '📷', title: 'Scan the Wine List', text: 'Tap "Select a Wine" then choose "Take a Photo" to use your camera (your flashlight will work!), or "Upload File" to use a saved photo or PDF from your device. Add as many pages as needed.' },
           { icon: '🎯', title: 'Answer the Quiz', text: 'After scanning, answer a few quick questions about what you\'re in the mood for tonight — color, price, body, country, etc. Skip any you don\'t care about.' },
           { icon: '🍾', title: 'Get Recommendations', text: 'Google Vision reads every wine on the list, then Grok picks the top 3 matches for your taste — plus one wine to avoid! Tap "🔍 What Vision read" to see exactly which wines were found. Filter by price if you want.' },
-          { icon: '➕', title: 'Add Wines You\'ve Tried', text: 'Tap "Add a Wine" to save wines you\'ve had. Scan the label or enter by hand. Rate it Amazing/Good/Fine/Bad. The more you add, the smarter Grok gets.' },
+          { icon: '➕', title: 'Add Wines You\'ve Tried', text: 'Tap "Add a Wine" to save wines you\'ve had. Scan the label or enter by hand. Rate it 1–5 stars. The more you add, the smarter Grok gets.' },
           { icon: '👑', title: 'Admin (Tap Logo 3x)', text: 'On the startup screen, tap the 🍷 logo three times to open Admin. Add or remove users and edit taste profiles.' },
         ].map(item => (
           <div key={item.title} style={{ marginBottom: '20px' }}>
@@ -821,14 +825,22 @@ If no wines are found in the text, return:
           )}
           <div>
             <label style={s.label}>How was it?</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {RATINGS.map(r => (
-                <button key={r} onClick={() => updateRating('rating', currentUser?.rating === r ? '' : r)}
-                  style={{ padding: '16px', borderRadius: '12px', border: '2px solid', cursor: 'pointer', background: currentUser?.rating === r ? '#B45309' : '#2A1F17', borderColor: currentUser?.rating === r ? '#FCD34D' : '#78350F', color: 'white', fontSize: '1rem', fontWeight: 'bold' }}>
-                  {r === 'Amazing' ? '🤩 Amazing' : r === 'Good' ? '😊 Good' : r === 'Fine' ? '😐 Fine' : '😞 Bad'}
-                </button>
-              ))}
+            <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', padding: '8px 0' }}>
+              {RATINGS.map(n => {
+                const selected = parseInt(currentUser?.rating || '0')
+                return (
+                  <button key={n} onClick={() => updateRating('rating', selected === n ? '' : String(n))}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '2.8rem', lineHeight: 1, padding: '4px', color: selected >= n ? '#FCD34D' : '#4A3520' }}>
+                    ★
+                  </button>
+                )
+              })}
             </div>
+            {currentUser?.rating && (
+              <p style={{ margin: '4px 0 0', textAlign: 'center', color: '#D4A574', fontSize: '0.9rem' }}>
+                {currentUser.rating === '1' ? 'Bad' : currentUser.rating === '2' ? 'Fine' : currentUser.rating === '3' ? 'Good' : currentUser.rating === '5' ? 'Amazing' : `${currentUser.rating} stars`}
+              </p>
+            )}
           </div>
           <div>
             <label style={s.label}>Value for money? (optional)</label>

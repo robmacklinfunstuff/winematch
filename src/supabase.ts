@@ -129,3 +129,15 @@ export async function getWinesForUsers(userNames: string[]) {
     ...row.wines,
   }))
 }
+
+export async function migrateTextRatingsToNumeric() {
+  const mappings = [
+    { text: 'Bad', numeric: '1' },
+    { text: 'Fine', numeric: '2' },
+    { text: 'Good', numeric: '3' },
+    { text: 'Amazing', numeric: '5' },
+  ]
+  for (const { text, numeric } of mappings) {
+    await supabase.from('ratings').update({ rating: numeric }).eq('rating', text)
+  }
+}

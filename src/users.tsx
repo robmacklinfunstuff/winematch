@@ -14,7 +14,7 @@ export interface SavedWine {
   country?: string;
   color?: 'red' | 'white' | 'rose' | 'sparkling' | 'dessert';
   tastingNotes?: string;
-  rating: 'Amazing' | 'Good' | 'Fine' | 'Bad';
+  rating: number;
   valueRating?: 'Great Value' | 'Fairly Priced' | 'Overrated';
   price?: number;
   dateAdded: string;
