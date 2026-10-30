@@ -160,7 +160,22 @@ export default function App() {
   const [ocrText, setOcrText] = useState('')
   const [ocrStatus, setOcrStatus] = useState('')
 
-  useEffect(() => { loadUsers(); migrateTextRatingsToNumeric() }, [])
+  useEffect(() => {
+    // Restore state after iOS camera reload (native camera causes full page reload on return)
+    const savedUsers = sessionStorage.getItem('wm_selected_users')
+    const savedScreen = sessionStorage.getItem('wm_screen') as Screen | null
+    if (savedUsers) { try { setSelectedUsers(JSON.parse(savedUsers)) } catch {} }
+    if (savedScreen && savedScreen !== 'startup') {
+      // Screens that can't fully restore — fall back to nearest safe screen
+      const fallback: Partial<Record<Screen, Screen>> = { quiz: 'scan', results: 'scan', addWineForm: 'home', rateWine: 'home' }
+      setScreen(fallback[savedScreen] ?? savedScreen)
+    }
+    loadUsers()
+    migrateTextRatingsToNumeric()
+  }, [])
+
+  useEffect(() => { sessionStorage.setItem('wm_screen', screen) }, [screen])
+  useEffect(() => { sessionStorage.setItem('wm_selected_users', JSON.stringify(selectedUsers)) }, [selectedUsers])
 
   const loadUsers = async () => {
     setUsersLoading(true)
